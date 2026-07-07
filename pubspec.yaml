@@ -14,6 +14,7 @@ dependencies:
   # LIBRARY BARU UNTUK MEMBUAT DAN MENCETAK VOUCHER PDF/THERMAL
   pdf: ^3.10.8
   printing: ^5.11.1
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:
