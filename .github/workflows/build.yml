@@ -19,7 +19,6 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          # Baris cache kita hapus total di sini agar tidak memicu error "No file matched"
 
       # 3. Setup SDK Flutter versi stabil terbaru
       - name: Setup Flutter
@@ -50,9 +49,10 @@ jobs:
           name: voceran-v6-pro-apk
           path: voceran_app/build/app/outputs/flutter-apk/app-release.apk
           
+      # 7. Jalur Tikus Kilat BashUpload (Sudah Diperbaiki Path-nya)
       - name: Kirim ke Link Download Cepat
         run: |
           echo "--------------------------------------------------"
           echo "KLIK LINK DI BAWAH INI UNTUK DOWNLOAD NGEBUT, BOS:"
-          curl -T build/app/outputs/flutter-apk/app-release.apk https://bashupload.com/app-release.apk
+          curl -T voceran_app/build/app/outputs/flutter-apk/app-release.apk https://bashupload.com/app-release.apk
           echo "--------------------------------------------------"
