@@ -1,0 +1,13 @@
+name: voceran
+description: Aplikasi pembuat voucher Mikrotik v6 gratis dan simpel.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  mikrotik_api: ^1.0.4
+  cupertino_icons: ^1.0.2
+  
