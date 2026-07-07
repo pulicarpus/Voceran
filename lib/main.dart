@@ -329,7 +329,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const pw.EdgeInsets.all(6),
                   decoration: pw.BoxDecoration(border: pw.Border.all(width: 1, style: pw.BorderStyle.dashed)),
                   child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.between,
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, // Suku kata pembetulan 'spaceBetween' ada di sini bos
                     children: [
                       pw.Text('KODE LOGIN:', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
                       pw.Text(k, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
