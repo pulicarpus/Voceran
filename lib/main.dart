@@ -40,7 +40,13 @@ class _VoucherScreenState extends State<VoucherScreen> {
     });
 
     String kode = generateCode();
-    var client = RouterClient(_ipController.text, _userController.text, _passController.text);
+    
+    // PERBAIKAN: Menggunakan nama class MikrotikApi yang benar sesuai library
+    var client = MikrotikApi(
+      host: _ipController.text,
+      user: _userController.text,
+      password: _passController.text,
+    );
     
     try {
       bool connected = await client.connect();
