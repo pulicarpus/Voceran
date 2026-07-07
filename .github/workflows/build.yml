@@ -1,0 +1,51 @@
+name: Build Flutter APK Minimalist
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Assemble Flutter Project Structure
+        run: |
+          # Buat struktur dasar android dan proyek di dalam runner secara instan
+          flutter create --org com.pulicarpus voceran_app
+          
+          # Hapus file mentahan bawaan pabrik
+          rm -f voceran_app/pubspec.yaml
+          rm -rf voceran_app/lib
+          
+          # Masukkan file kustom milik kita ke dalam struktur proyek
+          cp pubspec.yaml voceran_app/
+          cp -r lib voceran_app/
+          
+          # Ambil dependensi mikrotik_api
+          cd voceran_app
+          flutter pub get
+
+      - name: Build APK
+        run: |
+          cd voceran_app
+          flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: voceran-release-apk
+          path: voceran_app/build/app/outputs/flutter-apk/app-release.apk
