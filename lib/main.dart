@@ -1,470 +1,428 @@
 import 'dart:io';
-import 'dart:math';
 import 'dart:convert';
-import 'dart:async'; // Ditambahkan untuk mendukung StreamIterator agar tidak error Stream lagi
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:crypto/crypto.dart'; // Wajib pasang crypto: ^3.0.3 di pubspec.yaml
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const VoceranApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class VoceranApp extends StatelessWidget {
+  const VoceranApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Voceran MikroTik v6 Pro',
-      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: false),
-      home: const HomeScreen(),
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+      ),
+      home: const VoceranHomePage(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class VoceranHomePage extends StatefulWidget {
+  const VoceranHomePage({Key? key}) : super(key: key);
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<VoceranHomePage> createState() => _VoceranHomePageState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  // Controller Koneksi Router
-  final _ipController = TextEditingController(text: '10.10.10.1');
-  final _userController = TextEditingController(text: 'admin');
-  final _passController = TextEditingController(text: '');
+class _VoceranHomePageState extends State<VoceranHomePage> {
+  // Controller Input Router
+  final TextEditingController _ipController = TextEditingController(text: '10.10.10.1');
+  final TextEditingController _usernameController = TextEditingController(text: 'admin');
+  final TextEditingController _passwordController = TextEditingController(text: '');
 
-  // Controller Buat Profil Baru
-  final _namaPaketController = TextEditingController();
-  final _limitController = TextEditingController(text: '1M/1M');
-  final _masaAktifController = TextEditingController(text: '2d');
+  // Controller Buat Paket Baru
+  final TextEditingController _packageNameController = TextEditingController();
+  final TextEditingController _limitController = TextEditingController(text: '1M/1M');
+  final TextEditingController _quotaUptimeController = TextEditingController(text: '1h'); // Kuota internetan
+  final TextEditingController _validityController = TextEditingController(text: '2d');     // Masa aktif kalender
 
-  bool _isLoading = false;
-  List<Map<String, String>> _profiles = [];
-  String _statusKoneksi = 'BELUM TERHUBUNG';
+  String _connectionStatus = "Belum terhubung ke router.";
+  bool _isConnected = false;
+  List<String> _voucherProfiles = [];
 
-  // --- CORE KONEKSI SOCKET MIKROTIK API (PORT 8728) ---
-  Future<List<Map<String, String>>> _kirimPerintahMikrotik(List<String> perintah) async {
-    List<Map<String, String>> hasil = [];
+  // ==================== MIKROTIK CORE NETWORK PROTOCOL ====================
+
+  String _md5Chap(String password, String challengeHex) {
+    List<int> challengeBytes = [];
+    for (int i = 0; i < challengeHex.length; i += 2) {
+      challengeBytes.add(int.parse(challengeHex.substring(i, i + 2), radix: 16));
+    }
+    List<int> passwordBytes = utf8.encode(password);
+    List<int> buffer = [0] + passwordBytes + challengeBytes;
+    
+    return '00' + md5.convert(buffer).toString();
+  }
+
+  List<int> _encodeLength(int length) {
+    if (length < 0x80) {
+      return [length];
+    } else if (length < 0x4000) {
+      length |= 0x8000;
+      return [(length >> 8) & 0xFF, length & 0xFF];
+    }
+    return [length];
+  }
+
+  void _writeWord(Socket socket, String word) {
+    List<int> wordBytes = utf8.encode(word);
+    socket.add(_encodeLength(wordBytes.length));
+    socket.add(wordBytes);
+  }
+
+  Future<List<String>> _sendMikrotikCommand(List<String> sentences) async {
+    Socket? socket;
+    List<String> responseWords = [];
+    
     try {
-      Socket socket = await Socket.connect(_ipController.text, 8728, timeout: const Duration(seconds: 5));
-      // Menggunakan StreamIterator agar satu aliran socket bisa dibaca berkali-kali tanpa crash
-      StreamIterator<List<int>> iterator = StreamIterator(socket);
+      String ip = _ipController.text.trim();
+      int port = 8728;
       
-      // 1. Proses Login RouterOS v6
-      _kirimBlok(socket, ['/login']);
-      var responLogin = await _bacaRespon(iterator);
-      String ret = '';
-      for (var baris in responLogin) {
-        if (baris.startsWith('=ret=')) ret = baris.substring(5);
+      if (ip.contains(':')) {
+        List<String> parts = ip.split(':');
+        ip = parts[0];
+        port = int.parse(parts[1]);
       }
 
-      // Prosedur MD5 Challenge Chap RouterOS v6
-      String hash = _md5Chap(_passController.text, ret);
-      _kirimBlok(socket, ['/login', '=name=${_userController.text}', '=response=00$hash']);
-      var responSelesai = await _bacaRespon(iterator);
+      socket = await Socket.connect(ip, port, timeout: const Duration(seconds: 7));
       
-      bool loginSukses = true;
-      for (var baris in responSelesai) {
-        if (baris.contains('trap') || baris.contains('failed')) loginSukses = false;
+      _writeWord(socket, '/login');
+      _writeWord(socket, '');
+
+      await for (var data in socket) {
+        String dataStr = utf8.decode(data, allowMalformed: true);
+        responseWords.addAll(dataStr.split('\n'));
+        if (dataStr.contains('!done') || dataStr.contains('!trap')) break;
       }
 
-      if (!loginSukses) {
-        await iterator.cancel();
-        socket.destroy();
-        throw Exception('Username atau Password MikroTik Salah!');
+      String challenge = "";
+      for (String word in responseWords) {
+        if (word.contains('=ret=')) {
+          challenge = word.split('=ret=')[1].trim();
+        }
       }
 
-      // 2. Kirim Perintah Inti setelah Sukses Login
-      _kirimBlok(socket, perintah);
-      var responData = await _bacaRespon(iterator);
-      
-      // Bersihkan dan tutup subscription setelah selesai komunikasi
-      await iterator.cancel();
-      socket.destroy();
+      if (challenge.isEmpty) {
+        throw Exception("Gagal mendapatkan kode enkripsi (Challenge) dari MikroTik!");
+      }
 
-      // Koneksi sukses, konversi respon menjadi Map Data
-      Map<String, String> itemAktif = {};
-      for (var baris in responData) {
-        if (baris == '!re') {
-          if (itemAktif.isNotEmpty) hasil.add(Map.from(itemAktif));
-          itemAktif.clear();
-        } else if (baris.startsWith('=')) {
-          var potong = baris.substring(1).split('=');
-          if (potong.length >= 2) {
-            itemAktif[potong[0]] = potong.sublist(1).join('=');
+      responseWords.clear();
+      String hashedPass = _md5Chap(_passwordController.text, challenge);
+
+      _writeWord(socket, '/login');
+      _writeWord(socket, '=name=${_usernameController.text}');
+      _writeWord(socket, '=response=$hashedPass');
+      _writeWord(socket, '');
+
+      await for (var data in socket) {
+        String dataStr = utf8.decode(data, allowMalformed: true);
+        responseWords.addAll(dataStr.split('\n'));
+        if (dataStr.contains('!done') || dataStr.contains('!trap')) break;
+      }
+
+      bool loginSuccess = false;
+      for (String word in responseWords) {
+        if (word.contains('!done')) loginSuccess = true;
+        if (word.contains('!trap')) {
+          throw Exception("Username atau Password MikroTik Salah!");
+        }
+      }
+
+      if (!loginSuccess) throw Exception("Koneksi ditolak oleh Router!");
+
+      responseWords.clear();
+      for (String sentence in sentences) {
+        _writeWord(socket, sentence);
+      }
+      _writeWord(socket, '');
+
+      await for (var data in socket) {
+        String dataStr = utf8.decode(data, allowMalformed: true);
+        responseWords.addAll(dataStr.split('\n'));
+        if (dataStr.contains('!done') || dataStr.contains('!trap')) break;
+      }
+
+      await socket.flush();
+      return responseWords;
+
+    } finally {
+      socket?.destroy();
+    }
+  }
+
+  // ==================== OPERASI LOGIKA BUSINESS (SINKRON & SIMPAN) ====================
+
+  Future<void> _sinkronisasiProfil() async {
+    setState(() {
+      _connectionStatus = "Sedang menghubungkan...";
+    });
+
+    try {
+      List<String> rawReply = await _sendMikrotikCommand(['/ip/hotspot/user/profile/print']);
+      List<String> profilesFound = [];
+
+      for (String word in rawReply) {
+        if (word.contains('=name=')) {
+          String name = word.split('=name=')[1].split('\t')[0].replaceAll('\r', '').trim();
+          if (name != 'default') {
+            profilesFound.add(name);
           }
         }
       }
-      if (itemAktif.isNotEmpty) hasil.add(itemAktif);
 
-    } catch (e) {
-      rethrow;
-    }
-    return hasil;
-  }
-
-  void _kirimBlok(Socket socket, List<String> kata) {
-    for (var k in kata) {
-      List<int> panjang = _encodeLength(k.length);
-      socket.add(panjang);
-      socket.add(utf8.encode(k));
-    }
-    socket.add([0]); // Penutup blok kalimat API
-  }
-
-  // Fungsi pembaca respon yang sudah dimodifikasi menggunakan StreamIterator pembetulan bug
-  Future<List<String>> _bacaRespon(StreamIterator<List<int>> iterator) async {
-    List<String> baris = [];
-    while (await iterator.moveNext()) {
-      List<int> data = iterator.current;
-      String teks = utf8.decode(data, allowMalformed: true);
-      baris.addAll(teks.split(RegExp(r'[\x00-\x1f]')).where((e) => e.isNotEmpty));
-      if (teks.contains('!done') || teks.contains('!trap')) break;
-    }
-    return baris;
-  }
-
-  List<int> _encodeLength(int len) {
-    if (len < 0x80) return [len];
-    if (len < 0x4000) return [((len >> 8) & 0xff) | 0x80, len & 0xff];
-    return [len]; 
-  }
-
-  String _md5Chap(String password, String challenge) {
-    return challenge; 
-  }
-
-  // --- FITUR AMBIL PROFIL OTOMATIS (DINAMIS) ---
-  Future<void> _muatProfilDariMikrotik() async {
-    setState(() { _isLoading = true; });
-    try {
-      var data = await _kirimPerintahMikrotik(['/ip/hotspot/user/profile/print']);
       setState(() {
-        _profiles = data.where((p) => p['name'] != 'default').toList();
-        _statusKoneksi = 'TERHUBUNG (PROFIL DITEMUKAN: ${_profiles.length})';
+        _voucherProfiles = profilesFound;
+        _isConnected = true;
+        _connectionStatus = "STATUS: TERHUBUNG KE MIKROTIK!";
       });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Berhasil sinkronisasi profil MikroTik!')));
+
     } catch (e) {
-      setState(() { _statusKoneksi = 'GAGAL TERHUBUNG!'; });
-      _tampilkanDialogError(e.toString());
-    } finally {
-      setState(() { _isLoading = false; });
+      setState(() {
+        _isConnected = false;
+        _connectionStatus = "STATUS: GAGAL TERHUBUNG!";
+      });
+      _showErrorDialog(e.toString().replaceAll("Exception: ", ""));
     }
   }
 
-  // --- FITUR LIHAT VOUCHER YANG SEDANG AKTIF INTERNETAN ---
-  Future<void> _lihatVouncerAktif() async {
-    setState(() { _isLoading = true; });
-    try {
-      var dataAktif = await _kirimPerintahMikrotik(['/ip/hotspot/active/print']);
-      _tampilkanDialogVoucherAktif(dataAktif);
-    } catch (e) {
-      _tampilkanDialogError(e.toString());
-    } finally {
-      setState(() { _isLoading = false; });
-    }
-  }
-
-  // --- FITUR SIMPAN PROFIL BARU ---
   Future<void> _simpanProfilBaru() async {
-    if (_namaPaketController.text.isEmpty) return;
-    setState(() { _isLoading = true; });
+    if (!_isConnected) {
+      _showErrorDialog("Koneksi terputus! Silakan klik SINKRONISASI PROFIL terlebih dahulu.");
+      return;
+    }
+
+    String namaPaket = _packageNameController.text.trim();
+    String limit = _limitController.text.trim();
+    String kuotaWaktu = _quotaUptimeController.text.trim().toLowerCase();
+    String masaAktifKalender = _validityController.text.trim().toLowerCase();
+
+    // Validasi Input Kosong
+    if (namaPaket.isEmpty || limit.isEmpty || kuotaWaktu.isEmpty || masaAktifKalender.isEmpty) {
+      _showErrorDialog("Semua kolom input tambah profil wajib diisi bray, tidak boleh ada yang kosong!");
+      return;
+    }
+
+    // Validasi Format Waktu MikroTik (Regex Engine)
+    final RegExp mikrotikTimeRegex = RegExp(r'^(\d+[smhd])+$');
+    if (!mikrotikTimeRegex.hasMatch(kuotaWaktu) || !mikrotikTimeRegex.hasMatch(masaAktifKalender)) {
+      _showErrorDialog("Format penulisan waktu salah! Wajib gunakan angka + kode waktu MikroTik (s/m/h/d).\n\nContoh:\n• Kuota: 1h (1 Jam)\n• Masa Aktif: 2d (2 Hari)");
+      return;
+    }
+
+    // ENGINE UTAMA MIKHMON SCRIPT (Dipasang di on-login profile MikroTik)
+    // Berfungsi membuat Scheduler dinamis agar voucher otomatis terhapus dalam 'X' Hari sejak pertama kali login.
+    String mikhmonScript = 
+        ':local u "\$user"; '
+        ':if ([/system scheduler find name=\$u] = "") do={ '
+        '/system scheduler add name=\$u start-date=[/system clock get date] start-time=[/system clock get time] interval=$masaAktifKalender on-event="/ip hotspot user remove [find name=\$u]; /system scheduler remove [find name=\$u];" '
+        '}';
+
     try {
-      await _kirimPerintahMikrotik([
+      // Eksekusi pembuatan profil ke MikroTik API
+      await _sendMikrotikCommand([
         '/ip/hotspot/user/profile/add',
-        '=name=${_namaPaketController.text}',
-        '=rate-limit=${_limitController.text}',
-        '=idle-timeout=${_masaAktifController.text}'
+        '=name=$namaPaket',
+        '=rate-limit=$limit',
+        '=limit-uptime=$kuotaWaktu', // Mengunci durasi total internetan (bisa dicicil)
+        '=on-login=$mikhmonScript',  // Mengunci masa tenggang kalender (pemicu hangus otomatis)
+        '=idle-timeout=5m',          // Jika 5 menit HP tidak ada aktifitas, otomatis log-out biar kuota irit
+        '=status-autorefresh=1m'
       ]);
-      _namaPaketController.clear();
-      _muatProfilDariMikrotik();
-    } catch (e) {
-      _tampilkanDialogError(e.toString());
-    } finally {
-      setState(() { _isLoading = false; });
-    }
-  }
 
-  // --- FITUR GENERATE MASSAL & PEMBUATAN NOTA PDF ---
-  Future<void> _prosesGenerateMassal(String namaProfil, int jumlah, int panjangKode, String tipeVoucher) async {
-    setState(() { _isLoading = true; });
-    List<String> voucherTerbuat = [];
-    
-    try {
-      for (int i = 0; i < jumlah; i++) {
-        String kode = _acakKode(panjangKode);
-        List<String> cmd = [
-          '/ip/hotspot/user/add',
-          '=name=$kode',
-          '=profile=$namaProfil',
-        ];
-        if (tipeVoucher == 'Username = Password') {
-          cmd.add('=password=$kode');
-        }
-        await _kirimPerintahMikrotik(cmd);
-        voucherTerbuat.add(kode);
-      }
+      _packageNameController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Profil Paket '$namaPaket' Berhasil Dibuat!")),
+      );
       
-      _cetakNotaVoucherPDF(namaProfil, voucherTerbuat);
+      _sinkronisasiProfil();
+
     } catch (e) {
-      _tampilkanDialogError(e.toString());
-    } finally {
-      setState(() { _isLoading = false; });
+      _showErrorDialog(e.toString().replaceAll("Exception: ", ""));
     }
   }
 
-  String _acakKode(int len) {
-    const opsi = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; 
-    Random r = Random();
-    return List.generate(len, (index) => opsi[r.nextInt(opsi.length)]).join();
-  }
-
-  // --- DIALOG POPUP LAYAR ---
-  void _bukaMenuKonfigurasiCetak(String namaProfil) {
-    int jumlahVoucher = 5;
-    int panjangKarakter = 5;
-    String tipeVoucher = 'Username = Password';
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, top: 20, left: 20, right: 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Cetak Massal Paket: $namaProfil', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
-                  const SizedBox(height: 15),
-                  Text('Jumlah Voucher: $jumlahVoucher Lembar'),
-                  Slider(
-                    value: jumlahVoucher.toDouble(), min: 1, max: 50, divisions: 49,
-                    onChanged: (v) => setModalState(() => jumlahVoucher = v.toInt()),
-                  ),
-                  Text('Panjang Kode Voucher: $panjangKarakter Karakter'),
-                  Slider(
-                    value: panjangKarakter.toDouble(), min: 4, max: 8, divisions: 4,
-                    onChanged: (v) => setModalState(() => panjangKarakter = v.toInt()),
-                  ),
-                  const Text('Tipe Model Voucher:'),
-                  DropdownButton<String>(
-                    value: tipeVoucher, isExpanded: true,
-                    items: ['Username = Password', 'Username Saja'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                    onChanged: (v) => setModalState(() => tipeVoucher = v!),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.all(15)),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _prosesGenerateMassal(namaProfil, jumlahVoucher, panjangKarakter, tipeVoucher);
-                      },
-                      child: const Text('GENERATE & CETAK SEKARANG', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 25),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _tampilkanDialogVoucherAktif(List<Map<String, String>> data) {
+  void _showErrorDialog(String message) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Pelanggan Aktif (${data.length} Orang)'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: data.isEmpty 
-              ? const Text('Tidak ada pelanggan yang sedang terhubung internet saat ini.')
-              : ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: data.length,
-                  itemBuilder: (context, i) => ListTile(
-                    leading: const Icon(Icons.wifi_tethering, color: Colors.green),
-                    title: Text('User: ${data[i]['user'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text('IP: ${data[i]['address'] ?? '-'} | Uptime: ${data[i]['uptime'] ?? '-'}'),
-                    dense: true,
-                  ),
-                ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('TUTUP'))],
+        title: const Text("Sistem Notifikasi", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK", style: TextStyle(fontWeight: FontWeight.bold)),
+          )
+        ],
       ),
     );
   }
 
-  void _tampilkanDialogError(String msg) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Koneksi Gagal!', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-        content: Text(msg),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
-      ),
-    );
-  }
-
-  void _cetakNotaVoucherPDF(String profil, List<String> kodes) async {
-    final doc = pw.Document();
-    
-    doc.addPage(
+  // ==================== GENERATE & LAYOUT PDF VOUCHER ====================
+  Future<void> _cetakVoucherDummy(String namaProfil) async {
+    final pdf = pw.Document();
+    pdf.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.roll80, 
+        pageFormat: PdfPageFormat.a4,
         build: (pw.Context context) {
           return pw.Container(
-            padding: const pw.EdgeInsets.all(5),
+            padding: const pw.EdgeInsets.all(10),
             child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Center(child: pw.Text('VOUCHER HOTSPOT WIFI', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold))),
-                pw.Center(child: pw.Text('Paket Internet: $profil', style: const pw.TextStyle(fontSize: 10))),
-                pw.Divider(borderStyle: pw.BorderStyle.dashed),
-                pw.SizedBox(height: 5),
-                ...kodes.map((k) => pw.Container(
-                  margin: const pw.EdgeInsets.only(bottom: 8),
-                  padding: const pw.EdgeInsets.all(6),
-                  decoration: pw.BoxDecoration(border: pw.Border.all(width: 1, style: pw.BorderStyle.dashed)),
-                  child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text('KODE LOGIN:', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
-                      pw.Text(k, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
-                    ],
-                  ),
-                )),
-                pw.SizedBox(height: 5),
-                pw.Divider(borderStyle: pw.BorderStyle.dashed),
-                pw.Center(child: pw.Text('Terima Kasih Telah Berlangganan', style: const pw.TextStyle(fontSize: 8))),
+                pw.Text("VOCERAN MIKROTIK V6 PRO", style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+                pw.SizedBox(height: 10),
+                pw.Divider(),
+                pw.SizedBox(height: 10),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text("Paket Hotspot:"),
+                    pw.Text(namaProfil, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  ],
+                ),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text("Kode Voucher:"),
+                    pw.Text("VCHR-${DateTime.now().millisecond}", style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  ],
+                ),
               ],
             ),
           );
         },
       ),
     );
-
-    await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => doc.save());
+    await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
   }
+
+  // ==================== INTERFACE TAMPILAN WIDGET UI ====================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Voceran MikroTik v6 Pro'), centerTitle: true),
-      body: _isLoading 
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(15),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Card(
-                    elevation: 3,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        children: [
-                          const Text('PENGATURAN KONEKSI ROUTER', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                          const SizedBox(height: 10),
-                          TextField(controller: _ipController, decoration: const InputDecoration(labelText: 'IP / Domain VPN Remote', border: OutlineInputBorder())),
-                          const SizedBox(height: 8),
-                          TextField(controller: _userController, decoration: const InputDecoration(labelText: 'Username Router', border: OutlineInputBorder())),
-                          const SizedBox(height: 8),
-                          TextField(controller: _passController, obscureText: true, decoration: const InputDecoration(labelText: 'Password Router', border: OutlineInputBorder())),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: _muatProfilDariMikrotik,
-                                  icon: const Icon(Icons.sync),
-                                  label: const Text('SINKRONISASI PROFIL'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
-                                  onPressed: _lihatVouncerAktif,
-                                  icon: const Icon(Icons.people),
-                                  label: const Text('MONITOR AKTIF'),
-                                ),
-                              ),
-                            ],
+      appBar: AppBar(
+        title: const Text('Voceran MikroTik v6 Pro', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.blue,
+        centerTitle: true,
+        elevation: 2,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // KOTAK 1: SETTING ROUTER
+            Card(
+              elevation: 3,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              child: Padding(
+                padding: const EdgeInsets.all(14.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const Text("PENGATURAN KONEKSI ROUTER", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+                    const SizedBox(height: 10),
+                    TextField(controller: _ipController, decoration: const InputDecoration(labelText: 'IP / Domain VPN Remote', border: OutlineInputBorder(), isDense: true)),
+                    const SizedBox(height: 10),
+                    TextField(controller: _usernameController, decoration: const InputDecoration(labelText: 'Username Router', border: OutlineInputBorder(), isDense: true)),
+                    const SizedBox(height: 10),
+                    TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password Router', border: OutlineInputBorder(), isDense: true)),
+                    const SizedBox(height: 15),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)), padding: const EdgeInsets.symmetric(vertical: 12)),
+                            onPressed: _sinkronisasiProfil,
+                            icon: const Icon(Icons.sync, size: 18),
+                            label: const Text("SINKRONISASI PROFIL", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                           ),
-                          const SizedBox(height: 5),
-                          Text('STATUS: $_statusKoneksi', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.blue)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  const Text('PILIH PROFIL VOUCHER PELANGGAN:', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  _profiles.isEmpty
-                      ? const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('Belum ada tombol paket. Klik tombol "SINKRONISASI PROFIL" di atas setelah router terhubung.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey))))
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _profiles.length,
-                          itemBuilder: (context, i) {
-                            String nama = _profiles[i]['name'] ?? 'Unknown';
-                            return Card(
-                              color: Colors.blue.shade50,
-                              child: ListTile(
-                                leading: const Icon(Icons.confirmation_number, color: Colors.blue),
-                                title: Text(nama, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                subtitle: Text('Limit: ${_profiles[i]['rate-limit'] ?? 'No Limit'} | Expired: ${_profiles[i]['idle-timeout'] ?? '-'}'),
-                                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                                onTap: () => _bukaMenuKonfigurasiCetak(nama),
-                              ),
-                            );
-                          },
                         ),
-                  const SizedBox(height: 20),
-
-                  Card(
-                    shape: RoundedRectangleBorder(side: const BorderSide(color: Colors.orange, width: 1), borderRadius: BorderRadius.circular(5)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('➕ BUAT PROFIL & VALIDASI MASA AKTIF', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
-                          const SizedBox(height: 10),
-                          TextField(controller: _namaPaketController, decoration: const InputDecoration(labelText: 'Nama Paket Baru (Contoh: Paket_5K)', border: OutlineInputBorder())),
-                          const SizedBox(height: 8),
-                          TextField(controller: _limitController, decoration: const InputDecoration(labelText: 'Limit Kecepatan (Contoh: 1M/1M)', border: OutlineInputBorder())),
-                          const SizedBox(height: 8),
-                          TextField(controller: _masaAktifController, decoration: const InputDecoration(labelText: 'Masa Aktif Paket (Contoh: 12h atau 2d)', border: OutlineInputBorder())),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                              onPressed: _simpanProfilBaru,
-                              child: const Text('Simpan Profil Ke MikroTik', style: TextStyle(fontWeight: FontWeight.bold)),
-                            ),
-                          )
-                        ],
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF9C27B0), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)), padding: const EdgeInsets.symmetric(vertical: 12)),
+                            onPressed: () {},
+                            icon: const Icon(Icons.people, size: 18),
+                            label: const Text("MONITOR AKTIF", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 10),
+                    Text(_connectionStatus, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: _connectionStatus.contains("TERHUBUNG KE") ? Colors.blue : Colors.red)),
+                  ],
+                ),
               ),
             ),
+            const SizedBox(height: 15),
+
+            // SEKSI 2: TOMBOL TOMBOL CETAK VOUCHER
+            const Text("PILIH PROFIL VOUCHER PELANGGAN:", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black)),
+            const SizedBox(height: 8),
+            _voucherProfiles.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    child: Text("Belum ada tombol paket. Klik tombol \"SINKRONISASI PROFIL\" di atas setelah router terhubung.", style: TextStyle(color: Colors.grey, fontSize: 12), textAlign: TextAlign.center),
+                  )
+                : Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _voucherProfiles.map((profile) {
+                      return ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4))),
+                        onPressed: () => _cetakVoucherDummy(profile),
+                        child: Text(profile, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      );
+                    }).toList(),
+                  ),
+            const SizedBox(height: 15),
+
+            // KOTAK 3: FITUR TAMBAH PROFIL BARU + ENGINE VALIDASI MIKHMON
+            Card(
+              elevation: 3,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              side: const BorderSide(color: Colors.orange, width: 1),
+              child: Padding(
+                padding: const EdgeInsets.all(14.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("➕ BUAT PROFIL & LOGIKA MASA AKTIF", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.orange)),
+                    const SizedBox(height: 12),
+                    TextField(controller: _packageNameController, decoration: const InputDecoration(labelText: 'Nama Paket Baru (Contoh: Paket_1Jam)', border: OutlineInputBorder(), isDense: true)),
+                    const SizedBox(height: 10),
+                    TextField(controller: _limitController, decoration: const InputDecoration(labelText: 'Limit Kecepatan (Contoh: 1M/1M)', border: OutlineInputBorder(), isDense: true)),
+                    const SizedBox(height: 10),
+                    TextField(controller: _quotaUptimeController, decoration: const InputDecoration(labelText: 'Kuota Internet / Limit Uptime (Contoh: 1h)', border: OutlineInputBorder(), isDense: true)),
+                    const SizedBox(height: 10),
+                    TextField(controller: _validityController, decoration: const InputDecoration(labelText: 'Masa Berlaku Voucher / Validity (Contoh: 2d)', border: OutlineInputBorder(), isDense: true)),
+                    const SizedBox(height: 15),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)), padding: const EdgeInsets.symmetric(vertical: 12)),
+                        onPressed: _simpanProfilBaru,
+                        child: const Text("Simpan Profil Ke MikroTik", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
