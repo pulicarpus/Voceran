@@ -1,51 +1,51 @@
 name: Build Flutter APK Minimalist
 
+# Memicu build secara MANUAL saja dari tab Actions di GitHub
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      # 1. Mengambil kode dari repositori GitHub bos
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      # 2. Setup Java JDK (Wajib untuk kompilasi Android)
+      - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
 
+      # 3. Setup SDK Flutter versi stabil terbaru
+          cache: true
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          cache: true
 
+      # 4. Membuat base project dan menyalin file kustom dari HP bos
       - name: Assemble Flutter Project Structure
         run: |
-          # Buat struktur dasar android dan proyek di dalam runner secara instan
-          flutter create --org com.pulicarpus voceran_app
-          
-          # Hapus file mentahan bawaan pabrik
-          rm -f voceran_app/pubspec.yaml
-          rm -rf voceran_app/lib
-          
-          # Masukkan file kustom milik kita ke dalam struktur proyek
-          cp pubspec.yaml voceran_app/
+          flutter create voceran_app
           cp -r lib voceran_app/
-          
-          # Ambil dependensi mikrotik_api
-          cd voceran_app
-          flutter pub get
+          cp pubspec.yaml voceran_app/
+          cp -r android voceran_app/
 
-      - name: Build APK
+      # 5. Mengunduh package/library dan build ke APK Release
+      - name: Build APK Release
         run: |
           cd voceran_app
+          flutter pub get
           flutter build apk --release
 
-      - name: Upload APK artifact
+      # 6. Upload file APK hasil build agar bisa bos download di browser
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: voceran-release-apk
+          name: voceran-v6-pro-apk
           path: voceran_app/build/app/outputs/flutter-apk/app-release.apk
