@@ -1,12 +1,24 @@
-name: voceran
-description: Aplikasi pembuat voucher Mikrotik v6 gratis dan simpel.
+name: voceran_app
+description: "A new Flutter project."
+publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.4.0 <4.0.0'
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-  router_os_client: ^2.0.1
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ^1.0.6
+  
+  # LIBRARY BARU UNTUK MEMBUAT DAN MENCETAK VOUCHER PDF/THERMAL
+  pdf: ^3.10.8
+  printing: ^5.11.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
