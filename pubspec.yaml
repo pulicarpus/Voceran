@@ -8,5 +8,5 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  routeros: ^1.3.0
+  routeros: ^2.0.0
   cupertino_icons: ^1.0.2
