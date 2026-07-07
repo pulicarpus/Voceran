@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:convert';
+import 'dart:async'; // Ditambahkan untuk mendukung StreamIterator agar tidak error Stream lagi
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -50,10 +51,12 @@ class _HomeScreenState extends State<HomeScreen> {
     List<Map<String, String>> hasil = [];
     try {
       Socket socket = await Socket.connect(_ipController.text, 8728, timeout: const Duration(seconds: 5));
+      // Menggunakan StreamIterator agar satu aliran socket bisa dibaca berkali-kali tanpa crash
+      StreamIterator<List<int>> iterator = StreamIterator(socket);
       
       // 1. Proses Login RouterOS v6
       _kirimBlok(socket, ['/login']);
-      var responLogin = await _bacaRespon(socket);
+      var responLogin = await _bacaRespon(iterator);
       String ret = '';
       for (var baris in responLogin) {
         if (baris.startsWith('=ret=')) ret = baris.substring(5);
@@ -62,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // Prosedur MD5 Challenge Chap RouterOS v6
       String hash = _md5Chap(_passController.text, ret);
       _kirimBlok(socket, ['/login', '=name=${_userController.text}', '=response=00$hash']);
-      var responSelesai = await _bacaRespon(socket);
+      var responSelesai = await _bacaRespon(iterator);
       
       bool loginSukses = true;
       for (var baris in responSelesai) {
@@ -70,13 +73,17 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (!loginSukses) {
+        await iterator.cancel();
         socket.destroy();
         throw Exception('Username atau Password MikroTik Salah!');
       }
 
       // 2. Kirim Perintah Inti setelah Sukses Login
       _kirimBlok(socket, perintah);
-      var responData = await _bacaRespon(socket);
+      var responData = await _bacaRespon(iterator);
+      
+      // Bersihkan dan tutup subscription setelah selesai komunikasi
+      await iterator.cancel();
       socket.destroy();
 
       // Koneksi sukses, konversi respon menjadi Map Data
@@ -109,12 +116,14 @@ class _HomeScreenState extends State<HomeScreen> {
     socket.add([0]); // Penutup blok kalimat API
   }
 
-  Future<List<String>> _bacaRespon(Socket socket) async {
+  // Fungsi pembaca respon yang sudah dimodifikasi menggunakan StreamIterator pembetulan bug
+  Future<List<String>> _bacaRespon(StreamIterator<List<int>> iterator) async {
     List<String> baris = [];
-    await for (var data in socket) {
+    while (await iterator.moveNext()) {
+      List<int> data = iterator.current;
       String teks = utf8.decode(data, allowMalformed: true);
       baris.addAll(teks.split(RegExp(r'[\x00-\x1f]')).where((e) => e.isNotEmpty));
-      if (teks.contains('!done')) break;
+      if (teks.contains('!done') || teks.contains('!trap')) break;
     }
     return baris;
   }
@@ -329,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const pw.EdgeInsets.all(6),
                   decoration: pw.BoxDecoration(border: pw.Border.all(width: 1, style: pw.BorderStyle.dashed)),
                   child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, // Suku kata pembetulan 'spaceBetween' ada di sini bos
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                     children: [
                       pw.Text('KODE LOGIN:', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
                       pw.Text(k, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
