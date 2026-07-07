@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:mikrotik_api/mikrotik_api.dart';
+import 'package:routeros/routeros.dart';
 import 'dart:math';
 
 void main() => runApp(MyApp());
@@ -41,32 +41,30 @@ class _VoucherScreenState extends State<VoucherScreen> {
 
     String kode = generateCode();
     
-    // PERBAIKAN: Menggunakan nama class MikrotikApi yang benar sesuai library
-    var client = MikrotikApi(
-      host: _ipController.text,
-      user: _userController.text,
-      password: _passController.text,
-    );
-    
     try {
-      bool connected = await client.connect();
-      if (connected) {
-        await client.talk([
-          '/ip/hotspot/user/add',
-          '=name=$kode',
-          '=password=$kode',
-          '=profile=$profil',
-          '=limit-uptime=$limitWaktu'
-        ]);
-        
-        setState(() {
-          _hasilVoucher = kode;
-        });
-        client.disconnect();
-      } else {
-        showSnippet("Koneksi ke MikroTik Gagal!");
-        setState(() { _hasilVoucher = "-"; });
-      }
+      // Menghubungkan langsung ke port API MikroTik v6 (Port default: 8728)
+      final client = await RouterosClient.connect(
+        _ipController.text,
+        _userController.text,
+        _passController.text,
+      );
+
+      // Jalankan perintah membuat user hotspot langsung ke MikroTik v6
+      await client.execute([
+        '/ip/hotspot/user/add',
+        '=name=$kode',
+        '=password=$kode',
+        '=profile=$profil',
+        '=limit-uptime=$limitWaktu'
+      ]);
+      
+      setState(() {
+        _hasilVoucher = kode;
+      });
+      
+      // Putuskan koneksi setelah selesai dibuat
+      client.close();
+      
     } catch (e) {
       showSnippet("Error: $e");
       setState(() { _hasilVoucher = "-"; });
