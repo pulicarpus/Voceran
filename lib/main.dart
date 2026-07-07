@@ -314,7 +314,7 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(12.0),
         child: Column(
-          cross CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start, // FIX: Sudah diperbaiki dari kesalahan ketik kemarin!
           children: [
             // KOTAK 1: SETTING ROUTER
             Card(
@@ -383,12 +383,12 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
                   ),
             const SizedBox(height: 15),
 
-            // KOTAK 3: FITUR TAMBAH PROFIL BARU + ENGINE VALIDASI MIKHMON (FIXED STYLE BORDER)
+            // KOTAK 3: FITUR TAMBAH PROFIL BARU + ENGINE VALIDASI MIKHMON
             Card(
               elevation: 3,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(6),
-                side: const BorderSide(color: Colors.orange, width: 1), // FIX: Sekarang dimasukkan ke dalam bentuk shape!
+                side: const BorderSide(color: Colors.orange, width: 1), 
               ),
               child: Padding(
                 padding: const EdgeInsets.all(14.0),
