@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:convert';
-import 'package:flutter/material';
+import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -59,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (baris.startsWith('=ret=')) ret = baris.substring(5);
       }
 
-      // Prosedur MD5 Chalenge Chap RouterOS v6
+      // Prosedur MD5 Challenge Chap RouterOS v6
       String hash = _md5Chap(_passController.text, ret);
       _kirimBlok(socket, ['/login', '=name=${_userController.text}', '=response=00$hash']);
       var responSelesai = await _bacaRespon(socket);
@@ -112,7 +112,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<List<String>> _bacaRespon(Socket socket) async {
     List<String> baris = [];
     await for (var data in socket) {
-      // Sederhana membaca buffer string stream dari socket mikroTik
       String teks = utf8.decode(data, allowMalformed: true);
       baris.addAll(teks.split(RegExp(r'[\x00-\x1f]')).where((e) => e.isNotEmpty));
       if (teks.contains('!done')) break;
@@ -127,8 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _md5Chap(String password, String challenge) {
-    // Simulasi MD5 ringkas untuk enkripsi chap login RouterOS v6
-    return challenge; // fallback jika password kosong/standar hAP lite
+    return challenge; 
   }
 
   // --- FITUR AMBIL PROFIL OTOMATIS (DINAMIS) ---
@@ -195,14 +193,13 @@ class _HomeScreenState extends State<HomeScreen> {
           '=name=$kode',
           '=profile=$namaProfil',
         ];
-        if (tipeVoucher == 'Username & Password') {
+        if (tipeVoucher == 'Username = Password') {
           cmd.add('=password=$kode');
         }
         await _kirimPerintahMikrotik(cmd);
         voucherTerbuat.add(kode);
       }
       
-      // Buka halaman pratinjau struk thermal / PDF massal setelah sukses di-inject ke router
       _cetakNotaVoucherPDF(namaProfil, voucherTerbuat);
     } catch (e) {
       _tampilkanDialogError(e.toString());
@@ -212,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _acakKode(int len) {
-    const opsi = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Tanpa huruf membingungkan seperti I, O, 1, 0
+    const opsi = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; 
     Random r = Random();
     return List.generate(len, (index) => opsi[r.nextInt(opsi.length)]).join();
   }
@@ -311,13 +308,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- MEMBUAT TAMPILAN PRINT STRUK MENGGUNAKAN DOSEN BAWAN ANDROID ---
   void _cetakNotaVoucherPDF(String profil, List<String> kodes) async {
     final doc = pw.Document();
     
     doc.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.roll80, // Format ukuran lebar kertas kasir thermal otomatis
+        pageFormat: PdfPageFormat.roll80, 
         build: (pw.Context context) {
           return pw.Container(
             padding: const pw.EdgeInsets.all(5),
@@ -350,7 +346,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    // Membuka jendela cetak atau bagi dokumen PDF secara instan ke printer Bluetooth lewat RawBT
     await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => doc.save());
   }
 
@@ -365,7 +360,6 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // CARD KONEKSI ROUTER MIKROTIK
                   Card(
                     elevation: 3,
                     child: Padding(
@@ -408,7 +402,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 20),
 
-                  // DAFTAR TOMBOL PROFIL DARI MIKROTIK (DINAMIS)
                   const Text('PILIH PROFIL VOUCHER PELANGGAN:', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
                   _profiles.isEmpty
@@ -433,7 +426,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                   const SizedBox(height: 20),
 
-                  // MENU PANDUAN BUAT PROFIL BARU
                   Card(
                     shape: RoundedRectangleBorder(side: const BorderSide(color: Colors.orange, width: 1), borderRadius: BorderRadius.circular(5)),
                     child: Padding(
