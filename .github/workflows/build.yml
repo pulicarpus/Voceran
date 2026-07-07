@@ -19,7 +19,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle' # Diubah ke 'gradle' supaya tidak error lagi
+          # Baris cache kita hapus total di sini agar tidak memicu error "No file matched"
 
       # 3. Setup SDK Flutter versi stabil terbaru
       - name: Setup Flutter
