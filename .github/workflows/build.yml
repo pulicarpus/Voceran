@@ -48,12 +48,3 @@ jobs:
         with:
           name: voceran-v6-pro-apk
           path: voceran_app/build/app/outputs/flutter-apk/app-release.apk
-          
-      # 7. Jalur Tikus Kilat Menggunakan Transfer.sh (Lebih Stabil & Kebal DNS Error)
-      - name: Kirim ke Link Download Cepat
-        run: |
-          echo "--------------------------------------------------"
-          echo "KLIK LINK DI BAWAH INI UNTUK DOWNLOAD NGEBUT, BOS:"
-          curl --upload-file voceran_app/build/app/outputs/flutter-apk/app-release.apk https://transfer.sh/app-release.apk
-          echo ""
-          echo "--------------------------------------------------"
