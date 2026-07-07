@@ -44,8 +44,8 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
   // Controller Buat Paket Baru
   final TextEditingController _packageNameController = TextEditingController();
   final TextEditingController _limitController = TextEditingController(text: '1M/1M');
-  final TextEditingController _quotaUptimeController = TextEditingController(text: '1h'); // Kuota internetan
-  final TextEditingController _validityController = TextEditingController(text: '2d');     // Masa aktif kalender
+  final TextEditingController _quotaUptimeController = TextEditingController(text: '1h'); 
+  final TextEditingController _validityController = TextEditingController(text: '2d');     
 
   String _connectionStatus = "Belum terhubung ke router.";
   bool _isConnected = false;
@@ -160,7 +160,7 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
     }
   }
 
-  // ==================== OPERASI LOGIKA BUSINESS (SINKRON & SIMPAN) ====================
+  // ==================== OPERASI LOGIKA BUSINESS ====================
 
   Future<void> _sinkronisasiProfil() async {
     setState(() {
@@ -206,21 +206,17 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
     String kuotaWaktu = _quotaUptimeController.text.trim().toLowerCase();
     String masaAktifKalender = _validityController.text.trim().toLowerCase();
 
-    // Validasi Input Kosong
     if (namaPaket.isEmpty || limit.isEmpty || kuotaWaktu.isEmpty || masaAktifKalender.isEmpty) {
       _showErrorDialog("Semua kolom input tambah profil wajib diisi bray, tidak boleh ada yang kosong!");
       return;
     }
 
-    // Validasi Format Waktu MikroTik (Regex Engine)
     final RegExp mikrotikTimeRegex = RegExp(r'^(\d+[smhd])+$');
     if (!mikrotikTimeRegex.hasMatch(kuotaWaktu) || !mikrotikTimeRegex.hasMatch(masaAktifKalender)) {
       _showErrorDialog("Format penulisan waktu salah! Wajib gunakan angka + kode waktu MikroTik (s/m/h/d).\n\nContoh:\n• Kuota: 1h (1 Jam)\n• Masa Aktif: 2d (2 Hari)");
       return;
     }
 
-    // ENGINE UTAMA MIKHMON SCRIPT (Dipasang di on-login profile MikroTik)
-    // Berfungsi membuat Scheduler dinamis agar voucher otomatis terhapus dalam 'X' Hari sejak pertama kali login.
     String mikhmonScript = 
         ':local u "\$user"; '
         ':if ([/system scheduler find name=\$u] = "") do={ '
@@ -228,14 +224,13 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
         '}';
 
     try {
-      // Eksekusi pembuatan profil ke MikroTik API
       await _sendMikrotikCommand([
         '/ip/hotspot/user/profile/add',
         '=name=$namaPaket',
         '=rate-limit=$limit',
-        '=limit-uptime=$kuotaWaktu', // Mengunci durasi total internetan (bisa dicicil)
-        '=on-login=$mikhmonScript',  // Mengunci masa tenggang kalender (pemicu hangus otomatis)
-        '=idle-timeout=5m',          // Jika 5 menit HP tidak ada aktifitas, otomatis log-out biar kuota irit
+        '=limit-uptime=$kuotaWaktu', 
+        '=on-login=$mikhmonScript',  
+        '=idle-timeout=5m',          
         '=status-autorefresh=1m'
       ]);
 
@@ -319,7 +314,7 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(12.0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          cross CrossAxisAlignment.start,
           children: [
             // KOTAK 1: SETTING ROUTER
             Card(
@@ -388,11 +383,13 @@ class _VoceranHomePageState extends State<VoceranHomePage> {
                   ),
             const SizedBox(height: 15),
 
-            // KOTAK 3: FITUR TAMBAH PROFIL BARU + ENGINE VALIDASI MIKHMON
+            // KOTAK 3: FITUR TAMBAH PROFIL BARU + ENGINE VALIDASI MIKHMON (FIXED STYLE BORDER)
             Card(
               elevation: 3,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              side: const BorderSide(color: Colors.orange, width: 1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+                side: const BorderSide(color: Colors.orange, width: 1), // FIX: Sekarang dimasukkan ke dalam bentuk shape!
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(14.0),
                 child: Column(
