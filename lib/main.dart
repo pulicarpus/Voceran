@@ -165,7 +165,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // TAB 1: GENERATE & VALIDASI INPUT
   // ---------------------------------------------------------------------------
   Future<void> _generateMassalVouchers() async {
-    // ---- VALIDASI INPUT KETAT ----
     String qtyText = _bulkQtyController.text.trim();
     String uptimeText = _bulkUptimeController.text.trim();
 
@@ -214,7 +213,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
     if (response.contains("ERROR_KONEKSI")) {
       _statusMessage = "Koneksi terputus! Periksa IP & Password Router di Tab Pengaturan.";
-      _showSnackBar("Gagal koneksi ke Router!", Colors.redHexColor ?? Colors.red);
+      _showSnackBar("Gagal koneksi ke Router!", Colors.red); // <--- INI SUDAH DIPERBAIKI SANGAT AMAN BOS!
     } else {
       setState(() {
         _lastGeneratedCodes = generatedCodes;
@@ -226,7 +225,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // ENGINE LAYOUT CETAK PDF (EDISI HEMAT & MINI ANTI-BOROS KERTAS)
+  // ENGINE LAYOUT CETAK PDF
   // ---------------------------------------------------------------------------
   Future<void> _eksekusiCetakPdf() async {
     if (_lastGeneratedCodes.isEmpty) return;
@@ -517,7 +516,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
         );
       case 1:
-        // TAB BARU: HALAMAN DAFTAR VOUCHER YANG SUDAH DIBUAT DI ROUTER
         List<Map<String, String>> filteredVouchers = _allVouchersList.where((v) {
           return v['name']!.toLowerCase().contains(_searchQuery);
         }).toList();
@@ -531,7 +529,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text("DATA VOUCHER DI MIKROTIK", style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                  IconButton(icon: const Icon(Icons.refresh, color: Colors.green), onPressed: _allVouchersList == null ? null : _fetchAllVouchersFromRouter)
+                  IconButton(icon: const Icon(Icons.refresh, color: Colors.green), onPressed: _fetchAllVouchersFromRouter)
                 ],
               ),
               const SizedBox(height: 6),
@@ -720,11 +718,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           setState(() {
             _currentIndex = index;
           });
-          // Jikalau user membuka Tab Daftar Voucher (1)
           if (index == 1) {
             _fetchAllVouchersFromRouter();
           }
-          // Jikalau user membuka Tab User Online (3)
           if (index == 3) {
             _fetchActiveUsersFromRouter();
           }
