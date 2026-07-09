@@ -43,7 +43,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // ---------------------------------------------------------------------------
   // CONTROLLER PENGATURAN ROUTER
   // ---------------------------------------------------------------------------
-  final TextEditingController _ipController = TextEditingController(text: '192.168.88.1');
+  final TextEditingController _ipController = TextEditingController(text: '10.10.10.1');
   final TextEditingController _userController = TextEditingController(text: 'admin');
   final TextEditingController _passController = TextEditingController(text: '');
 
@@ -51,7 +51,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // CONTROLLER GENERATOR VOUCHER (TAB 1)
   // ---------------------------------------------------------------------------
   final TextEditingController _bulkUptimeController = TextEditingController(text: '1h');
-  final TextEditingController _bulkQtyController = TextEditingController(text: '9'); 
+  final TextEditingController _bulkQtyController = TextEditingController(text: '50'); 
   String _printFormat = 'A4'; 
 
   // ---------------------------------------------------------------------------
@@ -119,7 +119,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       final socket = await Socket.connect(ip, 8728, timeout: const Duration(seconds: 4));
       socket.destroy(); 
 
-      // Jika sukses terkoneksi, langsung tarik data profil riil dari mikrotik
       List<String> profCommand = ['/ip/hotspot/user/profile/print'];
       List<String> rawProfWords = await _communicatorMikrotik([profCommand]);
       
@@ -147,7 +146,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _selectedProfile = _listProfilHotspot[0]['nama'];
           _bulkUptimeController.text = _listProfilHotspot[0]['limit'] ?? '1h';
         }
-        _statusMessage = "Koneksi Berhasil! Profil MikroTik Sinkron.";
+        _statusMessage = "Koneksi ke MikroTik ($ip) SUKSES!";
       });
       _showSnackBar("⚡ KONEKSI SUKSES! Profil MikroTik berhasil disinkronkan.", Colors.green);
     } catch (e) {
@@ -160,7 +159,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // ENGINE SOKET API MIKROTIK (UPDATE: DETEKSI !trap REJECT)
+  // ENGINE SOKET API MIKROTIK
   // ---------------------------------------------------------------------------
   Future<List<String>> _communicatorMikrotik(List<List<String>> sentences) async {
     Socket? socket;
@@ -367,7 +366,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // UPDATE UTAMA: SINKRONISASI & SENSOR VOUCHER BERDASARKAN PROFIL MIKROTIK
+  // SINKRONISASI DATA VOUCHER DARI ROUTER
   // ---------------------------------------------------------------------------
   Future<void> _fetchAllVouchersFromRouter() async {
     setState(() {
@@ -446,7 +445,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // TAB 3: LOGIC BUAT PROFIL BARU (FIX SCRIPT & ERROR HANDLING)
+  // TAB 3: LOGIC BUAT PROFIL BARU
   // ---------------------------------------------------------------------------
   Future<void> _createNewProfile() async {
     String profName = _newProfileNameController.text.trim();
@@ -463,7 +462,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       _isLoading = true;
     });
 
-    // Perbaikan skrip on-login agar aman di-parse oleh API MikroTik
     String onLoginScript = ':local u \$"user"; /system scheduler add name=\$u interval=$validity on-event="/ip hotspot user remove [find name=\$u]; /system scheduler remove [find name=\$u];"';
 
     List<String> command = [
@@ -780,14 +778,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _buildActiveTabContent(),
           if (_isLoading)
             Container(
-              color: Colors.black24,
+              color: Colors.black.withOpacity(0.26),
               child: const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1E3A8A)))),
             ),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
-        onChanged: (index) {
+        onTap: (index) {
           setState(() {
             _currentIndex = index;
           });
