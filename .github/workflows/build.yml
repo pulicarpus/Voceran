@@ -42,9 +42,20 @@ jobs:
           flutter pub get
           flutter build apk --release
 
-      # 6. Upload file APK hasil build agar bisa bos download di browser
+      # 6. Upload file APK hasil build agar bisa bos download di browser (Bawaan)
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: voceran-v6-pro-apk
           path: voceran_app/build/app/outputs/flutter-apk/app-release.apk
+
+      # 7. SAKTI: Kirim file APK otomatis langsung ke chat Telegram Bos (Anti-Lemot)
+      - name: Kirim APK ke Telegram Bos
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          document: voceran_app/build/app/outputs/flutter-apk/app-release.apk
+          message: |
+            🚀 *Build Sukses, Bos!*
+            Aplikasi Voceran Flutter versi terbaru sudah matang terakit. Silakan langsung unduh dan instal di HP lewat Telegram (Koneksi Starlink dijamin ngebut!).
