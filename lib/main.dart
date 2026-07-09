@@ -107,6 +107,33 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // FITUR: TOMBOL PING LANGSUNG KE PORT API MIKROTIK
+  // ---------------------------------------------------------------------------
+  Future<void> _testMikrotikConnection() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      String ip = _ipController.text.trim();
+      final socket = await Socket.connect(ip, 8728, timeout: const Duration(seconds: 4));
+      socket.destroy(); 
+
+      setState(() {
+        _isLoading = false;
+        _statusMessage = "Koneksi ke MikroTik ($ip) SUKSES!";
+      });
+      _showSnackBar("⚡ KONEKSI SUKSES! HP Bos sudah terhubung ke MikroTik.", Colors.green);
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _statusMessage = "Koneksi GAGAL! Router tidak merespon.";
+      });
+      _showSnackBar("❌ KONEKSI GAGAL! Aktifkan Service API (8728) di MikroTik/Cek Wi-Fi.", Colors.red);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // ENGIN SOKET API MIKROTIK
   // ---------------------------------------------------------------------------
   Future<List<String>> _communicatorMikrotik(List<List<String>> sentences) async {
@@ -213,7 +240,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
     if (response.contains("ERROR_KONEKSI")) {
       _statusMessage = "Koneksi terputus! Periksa IP & Password Router di Tab Pengaturan.";
-      _showSnackBar("Gagal koneksi ke Router!", Colors.red); // <--- INI SUDAH DIPERBAIKI SANGAT AMAN BOS!
+      _showSnackBar("Gagal koneksi ke Router!", Colors.red);
     } else {
       setState(() {
         _lastGeneratedCodes = generatedCodes;
@@ -225,7 +252,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // ENGINE LAYOUT CETAK PDF
+  // 🛠️ UPDATE: ENGINE LAYOUT CETAK PDF (GRID DIPERKECIL & DIHEMAT)
   // ---------------------------------------------------------------------------
   Future<void> _eksekusiCetakPdf() async {
     if (_lastGeneratedCodes.isEmpty) return;
@@ -235,30 +262,30 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(15),
+          margin: const pw.EdgeInsets.all(12), // Margin lembaran sedikit dipersempit
           build: (pw.Context context) {
             return [
               pw.Wrap(
-                spacing: 6,    
-                runSpacing: 6, 
+                spacing: 4,    // Jarak spasi horizontal antar kotak dipersempit
+                runSpacing: 4, // Jarak spasi vertikal antar baris dipersempit
                 children: _lastGeneratedCodes.map((code) {
                   return pw.Container(
-                    width: 130, 
-                    height: 65, 
-                    padding: const pw.EdgeInsets.all(5),
+                    width: 92, // Diperkecil dari sebelumnya 130
+                    height: 48, // Diperkecil dari sebelumnya 65
+                    padding: const pw.EdgeInsets.all(3),
                     decoration: pw.BoxDecoration(
-                      border: pw.Border.all(width: 0.8, color: PdfColors.black),
-                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                      border: pw.Border.all(width: 0.6, color: PdfColors.black),
+                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(3)),
                     ),
                     child: pw.Column(
                       mainAxisAlignment: pw.MainAxisAlignment.center,
                       crossAxisAlignment: pw.CrossAxisAlignment.center,
                       children: [
-                        pw.Text("WIFI HOTSPOT", style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, letterSpacing: 0.5)),
-                        pw.Container(margin: const pw.EdgeInsets.symmetric(vertical: 2), height: 0.5, color: PdfColors.grey400),
-                        pw.Text(code, style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, letterSpacing: 1)),
-                        pw.SizedBox(height: 2),
-                        pw.Text("Durasi: ${_bulkUptimeController.text}", style: pw.TextStyle(fontSize: 6.5, color: PdfColors.grey700)),
+                        pw.Text("WIFI HOTSPOT", style: pw.TextStyle(fontSize: 5.5, fontWeight: pw.FontWeight.bold, letterSpacing: 0.3)),
+                        pw.Container(margin: const pw.EdgeInsets.symmetric(vertical: 1.5), height: 0.4, color: PdfColors.grey400),
+                        pw.Text(code, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, letterSpacing: 0.8)),
+                        pw.SizedBox(height: 1),
+                        pw.Text("Durasi: ${_bulkUptimeController.text}", style: pw.TextStyle(fontSize: 5, color: PdfColors.grey700)),
                       ],
                     ),
                   );
@@ -306,7 +333,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // TAB 2: MEKANISME MEMBACA SEMUA VOUCHER YANG SUDAH DIBUAT (DATABASE ROUTER)
+  // TAB 2: MEKANISME MEMBACA SEMUA VOUCHER YANG SUDAH DIBUAT
   // ---------------------------------------------------------------------------
   Future<void> _fetchAllVouchersFromRouter() async {
     setState(() {
@@ -501,7 +528,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                         icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
                         label: const Text("PROSES & CETAK VOUCHER", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.green[700], padding: const EdgeInsets.symmetric(vertical: 14)),
-                      )
+                      ),
+                      const SizedBox(height: 10),
+                      ElevatedButton.icon(
+                        onPressed: _testMikrotikConnection,
+                        icon: const Icon(Icons.router, color: Colors.white),
+                        label: const Text("CEK KONEKSI KE MIKROTIK", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 14)),
+                      ),
                     ],
                   ),
                 ),
