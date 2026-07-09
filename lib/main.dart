@@ -38,7 +38,7 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   bool _isLoading = false;
-  String _statusMessage = 'Sistem Siap Digunakan.';
+  String _statusMessage = 'Sistem Siap Digunakan. Silakan Cek Koneksi.';
 
   // ---------------------------------------------------------------------------
   // CONTROLLER PENGATURAN ROUTER
@@ -71,7 +71,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // ---------------------------------------------------------------------------
   // DATA STATE APLIKASI
   // ---------------------------------------------------------------------------
-  final List<Map<String, String>> _listProfilHotspot = [
+  List<Map<String, String>> _listProfilHotspot = [
     {'nama': 'Paket_1Jam', 'limit': '1h'},
     {'nama': 'Paket_2Jam', 'limit': '2h'},
   ];
@@ -107,7 +107,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // FITUR: TOMBOL PING LANGSUNG KE PORT API MIKROTIK
+  // FITUR: TOMBOL PING LANGSUNG KE PORT API MIKROTIK + AUTO SYNC PROFIL
   // ---------------------------------------------------------------------------
   Future<void> _testMikrotikConnection() async {
     setState(() {
@@ -119,11 +119,37 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       final socket = await Socket.connect(ip, 8728, timeout: const Duration(seconds: 4));
       socket.destroy(); 
 
+      // Jika sukses terkoneksi, langsung tarik data profil riil dari mikrotik
+      List<String> profCommand = ['/ip/hotspot/user/profile/print'];
+      List<String> rawProfWords = await _communicatorMikrotik([profCommand]);
+      
+      List<Map<String, String>> tempProfiles = [];
+      Map<String, String> currentProf = {};
+      
+      if (!rawProfWords.contains("ERROR_KONEKSI") && !rawProfWords.contains("ERROR_ROUTER_REJECTED")) {
+        for (String word in rawProfWords) {
+          if (word == '!re') {
+            if (currentProf.containsKey('nama')) tempProfiles.add(Map.from(currentProf));
+            currentProf.clear();
+          } else if (word.startsWith('=name=')) {
+            currentProf['nama'] = word.substring(6);
+          } else if (word.startsWith('=limit-uptime=')) {
+            currentProf['limit'] = word.substring(14);
+          }
+        }
+        if (currentProf.containsKey('nama')) tempProfiles.add(Map.from(currentProf));
+      }
+
       setState(() {
         _isLoading = false;
-        _statusMessage = "Koneksi ke MikroTik ($ip) SUKSES!";
+        if (tempProfiles.isNotEmpty) {
+          _listProfilHotspot = tempProfiles;
+          _selectedProfile = _listProfilHotspot[0]['nama'];
+          _bulkUptimeController.text = _listProfilHotspot[0]['limit'] ?? '1h';
+        }
+        _statusMessage = "Koneksi Berhasil! Profil MikroTik Sinkron.";
       });
-      _showSnackBar("⚡ KONEKSI SUKSES! HP Bos sudah terhubung ke MikroTik.", Colors.green);
+      _showSnackBar("⚡ KONEKSI SUKSES! Profil MikroTik berhasil disinkronkan.", Colors.green);
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -134,7 +160,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // ENGIN SOKET API MIKROTIK
+  // ENGINE SOKET API MIKROTIK (UPDATE: DETEKSI !trap REJECT)
   // ---------------------------------------------------------------------------
   Future<List<String>> _communicatorMikrotik(List<List<String>> sentences) async {
     Socket? socket;
@@ -171,7 +197,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         }
         socket.add([0]); 
         await socket.flush();
-        await Future.delayed(const Duration(milliseconds: 40));
+        await Future.delayed(const Duration(milliseconds: 50));
       }
 
       StringBuffer buffer = StringBuffer();
@@ -180,6 +206,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       }).asFuture().timeout(const Duration(seconds: 2), onTimeout: () {});
 
       outputResponse = buffer.toString().split('\x00');
+
+      if (buffer.toString().contains('!trap')) {
+        return ["ERROR_ROUTER_REJECTED"];
+      }
+
       return outputResponse;
     } catch (e) {
       return ["ERROR_KONEKSI"];
@@ -195,6 +226,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     String qtyText = _bulkQtyController.text.trim();
     String uptimeText = _bulkUptimeController.text.trim();
 
+    if (_selectedProfile == null) {
+      _showSnackBar("Gagal: Profil belum dipilih atau belum disinkronkan!", Colors.orange[800]!);
+      return;
+    }
     if (qtyText.isEmpty) {
       _showSnackBar("Gagal: Jumlah cetak voucher tidak boleh kosong!", Colors.orange[800]!);
       return;
@@ -202,10 +237,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     int? qty = int.tryParse(qtyText);
     if (qty == null || qty <= 0) {
       _showSnackBar("Gagal: Jumlah cetak harus berupa angka bulat di atas 0!", Colors.orange[800]!);
-      return;
-    }
-    if (uptimeText.isEmpty) {
-      _showSnackBar("Gagal: Batasan durasi (uptime) wajib diisi (Contoh: 1h)!", Colors.orange[800]!);
       return;
     }
 
@@ -241,6 +272,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     if (response.contains("ERROR_KONEKSI")) {
       _statusMessage = "Koneksi terputus! Periksa IP & Password Router di Tab Pengaturan.";
       _showSnackBar("Gagal koneksi ke Router!", Colors.red);
+    } else if (response.contains("ERROR_ROUTER_REJECTED")) {
+      _statusMessage = "MikroTik menolak pembuatan voucher.";
+      _showSnackBar("Gagal: MikroTik menolak data voucher!", Colors.redAccent);
     } else {
       setState(() {
         _lastGeneratedCodes = generatedCodes;
@@ -252,7 +286,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // 🛠️ UPDATE: ENGINE LAYOUT CETAK PDF (GRID DIPERKECIL & DIHEMAT)
+  // LAYOUT CETAK PDF GRID MINI (HEMAT KERTAS)
   // ---------------------------------------------------------------------------
   Future<void> _eksekusiCetakPdf() async {
     if (_lastGeneratedCodes.isEmpty) return;
@@ -262,16 +296,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(12), // Margin lembaran sedikit dipersempit
+          margin: const pw.EdgeInsets.all(12),
           build: (pw.Context context) {
             return [
               pw.Wrap(
-                spacing: 4,    // Jarak spasi horizontal antar kotak dipersempit
-                runSpacing: 4, // Jarak spasi vertikal antar baris dipersempit
+                spacing: 4,
+                runSpacing: 4,
                 children: _lastGeneratedCodes.map((code) {
                   return pw.Container(
-                    width: 92, // Diperkecil dari sebelumnya 130
-                    height: 48, // Diperkecil dari sebelumnya 65
+                    width: 92,
+                    height: 48,
                     padding: const pw.EdgeInsets.all(3),
                     decoration: pw.BoxDecoration(
                       border: pw.Border.all(width: 0.6, color: PdfColors.black),
@@ -333,7 +367,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // TAB 2: MEKANISME MEMBACA SEMUA VOUCHER YANG SUDAH DIBUAT
+  // UPDATE UTAMA: SINKRONISASI & SENSOR VOUCHER BERDASARKAN PROFIL MIKROTIK
   // ---------------------------------------------------------------------------
   Future<void> _fetchAllVouchersFromRouter() async {
     setState(() {
@@ -341,42 +375,78 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       _allVouchersList.clear();
     });
 
+    List<String> profCommand = ['/ip/hotspot/user/profile/print'];
+    List<String> rawProfWords = await _communicatorMikrotik([profCommand]);
+
+    List<String> activeProfileNames = [];
+    List<Map<String, String>> tempProfiles = [];
+    Map<String, String> currentProf = {};
+
+    if (!rawProfWords.contains("ERROR_KONEKSI") && !rawProfWords.contains("ERROR_ROUTER_REJECTED")) {
+      for (String word in rawProfWords) {
+        if (word == '!re') {
+          if (currentProf.containsKey('nama')) {
+            tempProfiles.add(Map.from(currentProf));
+            activeProfileNames.add(currentProf['nama']!);
+          }
+          currentProf.clear();
+        } else if (word.startsWith('=name=')) {
+          currentProf['nama'] = word.substring(6);
+        } else if (word.startsWith('=limit-uptime=')) {
+          currentProf['limit'] = word.substring(14);
+        }
+      }
+      if (currentProf.containsKey('nama')) {
+        tempProfiles.add(Map.from(currentProf));
+        activeProfileNames.add(currentProf['nama']!);
+      }
+    }
+
     List<String> command = ['/ip/hotspot/user/print'];
     List<String> rawWords = await _communicatorMikrotik([command]);
 
     List<Map<String, String>> tempVouchers = [];
     Map<String, String> currentItem = {};
 
-    for (String word in rawWords) {
-      if (word == '!re') {
-        if (currentItem.containsKey('name')) {
+    if (!rawWords.contains("ERROR_KONEKSI") && !rawWords.contains("ERROR_ROUTER_REJECTED")) {
+      for (String word in rawWords) {
+        if (word == '!re') {
+          if (currentItem.containsKey('name')) {
+            if (activeProfileNames.contains(currentItem['profile'])) {
+              tempVouchers.add(Map.from(currentItem));
+            }
+          }
+          currentItem.clear();
+        } else if (word.startsWith('=name=')) {
+          currentItem['name'] = word.substring(6);
+        } else if (word.startsWith('=profile=')) {
+          currentItem['profile'] = word.substring(9);
+        } else if (word.startsWith('=limit-uptime=')) {
+          currentItem['limit'] = word.substring(14);
+        }
+      }
+      if (currentItem.containsKey('name')) {
+        if (activeProfileNames.contains(currentItem['profile'])) {
           tempVouchers.add(Map.from(currentItem));
         }
-        currentItem.clear();
-      } else if (word.startsWith('=name=')) {
-        currentItem['name'] = word.substring(6);
-      } else if (word.startsWith('=profile=')) {
-        currentItem['profile'] = word.substring(9);
-      } else if (word.startsWith('=limit-uptime=')) {
-        currentItem['limit'] = word.substring(14);
       }
-    }
-    if (currentItem.containsKey('name')) {
-      tempVouchers.add(Map.from(currentItem));
     }
 
     setState(() {
       _isLoading = false;
       _allVouchersList = tempVouchers;
+      if (tempProfiles.isNotEmpty) {
+        _listProfilHotspot = tempProfiles;
+      }
     });
 
-    if (rawWords.contains("ERROR_KONEKSI")) {
-      _showSnackBar("Gagal sinkronisasi data voucher!", Colors.redAccent);
+    if (rawWords.contains("ERROR_KONEKSI") || rawProfWords.contains("ERROR_KONEKSI")) {
+      _showSnackBar("Gagal sinkronisasi data dari Router!", Colors.redAccent);
     }
   }
 
   // ---------------------------------------------------------------------------
-  // TAB 3: LOGIC BUAT PROFIL BARU
+  // TAB 3: LOGIC BUAT PROFIL BARU (FIX SCRIPT & ERROR HANDLING)
   // ---------------------------------------------------------------------------
   Future<void> _createNewProfile() async {
     String profName = _newProfileNameController.text.trim();
@@ -393,8 +463,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       _isLoading = true;
     });
 
-    String onLoginScript = 
-        ':local u \$"user"; /system scheduler add name=\$u interval=$validity on-event="/ip hotspot user remove [find name=\$u]; /ip hotspot active remove [find user=\$u]; /system scheduler remove [find name=\$u];"';
+    // Perbaikan skrip on-login agar aman di-parse oleh API MikroTik
+    String onLoginScript = ':local u \$"user"; /system scheduler add name=\$u interval=$validity on-event="/ip hotspot user remove [find name=\$u]; /system scheduler remove [find name=\$u];"';
 
     List<String> command = [
       '/ip/hotspot/user/profile/add',
@@ -412,16 +482,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     });
 
     if (response.contains("ERROR_KONEKSI")) {
-      _showSnackBar("Gagal membuat profil. Cek koneksi!", Colors.redAccent);
+      _showSnackBar("❌ Gagal membuat profil. Cek koneksi fisik!", Colors.redAccent);
+    } else if (response.contains("ERROR_ROUTER_REJECTED")) {
+      _showSnackBar("⚠️ MikroTik Menolak! Profil sudah ada atau struktur script diblokir.", Colors.amber[900]!);
     } else {
+      _newProfileNameController.clear();
+      _showSnackBar("🎉 Profil baru sukses disinkronkan!", Colors.green);
+      _fetchAllVouchersFromRouter();
       setState(() {
-        _listProfilHotspot.add({'nama': profName, 'limit': uptimeLimit});
-        _selectedProfile = profName;
-        _bulkUptimeController.text = uptimeLimit;
         _currentIndex = 0; 
       });
-      _newProfileNameController.clear();
-      _showSnackBar("Profil baru sukses disinkronkan!", Colors.green);
     }
   }
 
@@ -440,20 +510,22 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     List<Map<String, String>> tempUsers = [];
     Map<String, String> currentActive = {};
 
-    for (String word in rawWords) {
-      if (word == '!re') {
-        if (currentActive.containsKey('user')) {
-          tempUsers.add(Map.from(currentActive));
+    if (!rawWords.contains("ERROR_KONEKSI") && !rawWords.contains("ERROR_ROUTER_REJECTED")) {
+      for (String word in rawWords) {
+        if (word == '!re') {
+          if (currentActive.containsKey('user')) {
+            tempUsers.add(Map.from(currentActive));
+          }
+          currentActive.clear();
+        } else if (word.startsWith('=user=')) {
+          currentActive['user'] = word.substring(6);
+        } else if (word.startsWith('=uptime=')) {
+          currentActive['uptime'] = word.substring(8);
         }
-        currentActive.clear();
-      } else if (word.startsWith('=user=')) {
-        currentActive['user'] = word.substring(6);
-      } else if (word.startsWith('=uptime=')) {
-        currentActive['uptime'] = word.substring(8);
       }
-    }
-    if (currentActive.containsKey('user')) {
-      tempUsers.add(Map.from(currentActive));
+      if (currentActive.containsKey('user')) {
+        tempUsers.add(Map.from(currentActive));
+      }
     }
 
     setState(() {
@@ -463,7 +535,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // ENGINE VIEW SWITCHER (5 TAB UTAMA)
+  // ENGINE VIEW SWITCHER (4 TAB UTAMA)
   // ---------------------------------------------------------------------------
   Widget _buildActiveTabContent() {
     switch (_currentIndex) {
@@ -486,16 +558,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       const Text("Pilih Profil:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                       const SizedBox(height: 6),
                       DropdownButtonFormField<String>(
-                        value: _selectedProfile,
+                        value: _listProfilHotspot.any((p) => p['nama'] == _selectedProfile) ? _selectedProfile : null,
                         decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12)),
-                        items: _listProfilHotspot.map((p) => DropdownMenuItem(value: p['nama'], child: Text("${p['nama']} (${p['limit']})"))).toList(),
+                        items: _listProfilHotspot.map((p) => DropdownMenuItem(value: p['nama'], child: Text("${p['nama']} (${p['limit'] ?? '1h'})"))).toList(),
                         onChanged: (v) {
                           setState(() {
                             _selectedProfile = v;
                             var item = _listProfilHotspot.firstWhere((element) => element['nama'] == v);
-                            _bulkUptimeController.text = item['limit']!;
+                            _bulkUptimeController.text = item['limit'] ?? '1h';
                           });
                         },
+                        hint: const Text("Pilih profil / ketuk Cek Koneksi"),
                       ),
                       const SizedBox(height: 16),
                       const Text("Ubah Batas Waktu / Uptime:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
@@ -580,7 +653,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                           children: const [
                             Icon(Icons.badge_outlined, size: 48, color: Colors.grey),
                             SizedBox(height: 8),
-                            Text("Tidak ada data voucher ditemukan.", style: TextStyle(color: Colors.grey, fontSize: 13)),
+                            Text("Tidak ada voucher (Atau profil paket belum dibuat di MikroTik).", style: TextStyle(color: Colors.grey, fontSize: 13), textAlign: TextAlign.center),
                           ],
                         ),
                       )
@@ -671,13 +744,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     : ListView.builder(
                         itemCount: _activeUsersList.length,
                         itemBuilder: (context, index) {
+                          String actUser = _activeUsersList[index]['user'] ?? 'Unknown';
+                          String actUp = _activeUsersList[index]['uptime'] ?? '0s';
                           return Card(
                             elevation: 1.5,
                             margin: const EdgeInsets.symmetric(vertical: 4),
                             child: ListTile(
-                              leading: const CircleAvatar(backgroundColor: Colors.blue, child: Icon(Icons.wifi, color: Colors.white, size: 18)),
-                              title: Text(_activeUsersList[index]['user']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                              subtitle: Text("Uptime Terpakai: ${_activeUsersList[index]['uptime']!}", style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.w600)),
+                              leading: const CircleAvatar(backgroundColor: Colors.blue, child: Icon(Icons.person, color: Colors.white, size: 16)),
+                              title: Text("User: $actUser", style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Text("Uptime Aktif: $actUp", style: const TextStyle(fontSize: 12)),
                             ),
                           );
                         },
@@ -686,36 +761,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ],
           ),
         );
-      case 4:
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text("KONFIGURASI PARAMETER ROUTER MITRA", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Card(
-                elevation: 3,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextField(controller: _ipController, decoration: const InputDecoration(labelText: 'IP Router / Host VPN Remote', prefixIcon: Icon(Icons.dns), border: OutlineInputBorder(), isDense: true)),
-                      const SizedBox(height: 12),
-                      TextField(controller: _userController, decoration: const InputDecoration(labelText: 'Username API Router', prefixIcon: Icon(Icons.person), border: OutlineInputBorder(), isDense: true)),
-                      const SizedBox(height: 12),
-                      TextField(controller: _passController, obscureText: true, decoration: const InputDecoration(labelText: 'Password API Router', prefixIcon: Icon(Icons.lock), border: OutlineInputBorder(), isDense: true)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
       default:
-        return const SizedBox();
+        return const Center(child: Text("Tab Tidak Ditemukan"));
     }
   }
 
@@ -723,48 +770,38 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MikroTik Voucher Manager Pro', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+        title: const Text("Voucher Manager Pro", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: const Color(0xFF1E3A8A),
         centerTitle: true,
-        elevation: 1,
+        elevation: 2,
       ),
-      body: _isLoading 
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Color(0xFF1E3A8A)),
-                  SizedBox(height: 14),
-                  Text("Berkomunikasi dengan MikroTik...", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 13)),
-                ],
-              ),
-            ) 
-          : _buildActiveTabContent(),
-          
+      body: Stack(
+        children: [
+          _buildActiveTabContent(),
+          if (_isLoading)
+            Container(
+              color: Colors.black24,
+              child: const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1E3A8A)))),
+            ),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
-        selectedItemColor: const Color(0xFF1E3A8A),
-        unselectedItemColor: Colors.grey,
-        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-        unselectedLabelStyle: const TextStyle(fontSize: 11),
-        onTap: (index) {
+        onChanged: (index) {
           setState(() {
             _currentIndex = index;
           });
-          if (index == 1) {
-            _fetchAllVouchersFromRouter();
-          }
-          if (index == 3) {
-            _fetchActiveUsersFromRouter();
-          }
+          if (index == 1) _fetchAllVouchersFromRouter();
+          if (index == 3) _fetchActiveUsersFromRouter();
         },
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: const Color(0xFF1E3A8A),
+        unselectedItemColor: Colors.grey,
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.confirmation_number), label: 'Cetak'),
-          BottomNavigationBarItem(icon: Icon(Icons.view_list), label: 'Daftar'),
-          BottomNavigationBarItem(icon: Icon(Icons.add_box), label: 'Profil'),
-          BottomNavigationBarItem(icon: Icon(Icons.monitor_heart), label: 'Aktif'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Router'),
+          BottomNavigationBarItem(icon: Icon(Icons.print), label: 'Cetak'),
+          BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Voucher'),
+          BottomNavigationBarItem(icon: Icon(Icons.add_to_photos), label: 'Profil'),
+          BottomNavigationBarItem(icon: Icon(Icons.bolt), label: 'Aktif'),
         ],
       ),
     );
