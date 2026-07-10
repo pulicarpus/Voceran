@@ -167,8 +167,7 @@ class _TabAktifState extends State<TabAktif> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Putuskan Koneksi?"),
-        dominantColor: Colors.red, // placeholder logical styling
+        title: const Text("Putuskan Koneksi?", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
         content: Text("Apakah Bos yakin ingin men-kick user $username secara paksa?"),
         actions: [
           TextButton(
