@@ -57,7 +57,8 @@ class _TabVoucherState extends State<TabVoucher> {
       }
 
       setState(() {
-        _allVouchers = tempVouchers;
+        // Proteksi otomatis: Abaikan user 'default' bawaan sistem MikroTik agar aman dari terhapus
+        _allVouchers = tempVouchers.where((v) => v['name'] != 'default').toList();
         _listProfilFilter = profilesFound.toList();
         _isLoading = false;
       });
@@ -91,7 +92,7 @@ class _TabVoucherState extends State<TabVoucher> {
                 borderRadius: pw.BorderRadius.circular(4),
               ),
               child: pw.Column(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text("WIFI HOTSPOT", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 7)),
                   pw.Container(
@@ -117,10 +118,99 @@ class _TabVoucherState extends State<TabVoucher> {
     await Printing.layoutPdf(onLayout: (format) async => pdf.save());
   }
 
+  // 3. FUNGSI HAPUS VOUCHER SATU PER SATU (ECERAN)
+  Future<void> _hapusVoucherTunggal(String id, String name) async {
+    bool konfirmasi = await _showKonfirmasiDialog(
+      "Hapus Eceran",
+      "Apakah Bos yakin ingin menghapus voucher dengan kode: $name?",
+      okText: "Ya, Hapus",
+      okColor: Colors.red,
+    );
+
+    if (!konfirmasi) return;
+
+    setState(() => _isLoading = true);
+    try {
+      var response = await MikrotikAPI.run([
+        ['/ip/hotspot/user/remove', '=.id=$id']
+      ]);
+
+      if (response.contains("ERROR") || response.contains("!trap")) {
+        _showSnackBar("Gagal menghapus voucher $name", Colors.redAccent);
+      } else {
+        _showSnackBar("Voucher $name berhasil dihapus!", Colors.green);
+        _loadDaftarVoucher();
+      }
+    } catch (e) {
+      _showSnackBar("Terjadi kesalahan: $e", Colors.redAccent);
+    } final {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // 4. FUNGSI HAPUS VOUCHER SATU BATCH (MASSAL BERDASARKAN GRUP KOMENTAR)
+  Future<void> _hapusVoucherGrup(String commentName, List<Map<String, String>> targets) async {
+    bool konfirmasi = await _showKonfirmasiDialog(
+      "Hapus Massal Satu Grup",
+      "Perhatian Bos!\nSebanyak ${targets.length} voucher di grup '$commentName' akan DISAPU BERSIH secara permanen. Lanjutkan?",
+      okText: "Hapus Semua",
+      okColor: Colors.red,
+    );
+
+    if (!konfirmasi) return;
+
+    setState(() => _isLoading = true);
+    try {
+      List<List<String>> batchCommand = [];
+      for (var voucher in targets) {
+        if (voucher['id'] != null) {
+          batchCommand.add(['/ip/hotspot/user/remove', '=.id=${voucher['id']}']);
+        }
+      }
+
+      var response = await MikrotikAPI.run(batchCommand);
+
+      if (response.contains("ERROR") || response.contains("!trap")) {
+        _showSnackBar("Beberapa atau seluruh voucher grup gagal dihapus", Colors.redAccent);
+      } else {
+        _showSnackBar("Sukses! ${targets.length} Voucher grup '$commentName' berhasil dibersihkan!", Colors.green);
+      }
+      _loadDaftarVoucher();
+    } catch (e) {
+      _showSnackBar("Terjadi kesalahan sistem: $e", Colors.redAccent);
+    } final {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // HELPER DIALOG KONFIRMASI UNIVERSAL (Bisa Custom Warna & Teks Tombol)
+  Future<bool> _showKonfirmasiDialog(
+    String title, 
+    String message, {
+    String okText = "Ya, Proses", 
+    Color okColor = Colors.blue
+  }) async {
+    return await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+            content: Text(message),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Batal")),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(okText, style: TextStyle(color: okColor, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: color),
+      SnackBar(content: Text(message, style: const TextStyle(fontWeight: FontWeight.bold)), backgroundColor: color),
     );
   }
 
@@ -153,7 +243,7 @@ class _TabVoucherState extends State<TabVoucher> {
           )
         ],
       ),
-      body: _isLoading
+      body: _isLoading && _allVouchers.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
@@ -177,7 +267,7 @@ class _TabVoucherState extends State<TabVoucher> {
                 // LIST GRUP VOUCHER DENGAN EXPANSION TILE
                 Expanded(
                   child: filteredList.isEmpty
-                      ? const Center(child: Text("Tidak ada voucher ditemukan"))
+                      ? const Center(child: Text("Tidak ada voucher ditemukan", style: TextStyle(color: Colors.grey)))
                       : RefreshIndicator(
                           onRefresh: _loadDaftarVoucher,
                           child: ListView.builder(
@@ -199,13 +289,28 @@ class _TabVoucherState extends State<TabVoucher> {
                                   ),
                                   subtitle: Text("${itemsInGroup.length} Voucher ditemukan"),
                                   trailing: Wrap(
-                                    spacing: 12,
+                                    spacing: 0,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
                                     children: [
-                                      // TOMBOL UNTUK CETAK SATU BATCH SEKALIGUS
+                                      // 1. TOMBOL CETAK SATU GRUP MASSAL (DENGAN POPUP)
                                       IconButton(
                                         icon: const Icon(Icons.print, color: Colors.blueAccent),
                                         tooltip: "Cetak Massal Grup Ini",
-                                        onPressed: () => _cetakUlangPdf(itemsInGroup),
+                                        onPressed: () async {
+                                          bool siapkanPrint = await _showKonfirmasiDialog(
+                                            "Konfirmasi Cetak",
+                                            "Apakah Bos ingin mencetak semua (${itemsInGroup.length}) voucher di grup '$groupKey'?",
+                                            okText: "Cetak",
+                                            okColor: Colors.blue,
+                                          );
+                                          if (siapkanPrint) _cetakUlangPdf(itemsInGroup);
+                                        },
+                                      ),
+                                      // 2. TOMBOL HAPUS SATU GRUP MASSAL (DENGAN POPUP)
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
+                                        tooltip: "Hapus Masal Grup Ini",
+                                        onPressed: () => _hapusVoucherGrup(groupKey, itemsInGroup),
                                       ),
                                       const Icon(Icons.expand_more),
                                     ],
@@ -215,14 +320,25 @@ class _TabVoucherState extends State<TabVoucher> {
                                       leading: const Icon(Icons.vpn_key, color: Colors.orangeAccent),
                                       title: Text(
                                         v['name'] ?? '-',
-                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                        style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
                                       ),
                                       subtitle: Text("Profil: ${v['profile']} | Limit: ${v['limit-uptime'] ?? '-'}"),
-                                      trailing: const Icon(Icons.print_outlined, size: 20, color: Colors.grey),
-                                      onTap: () {
-                                        // KLIK DI SINI UNTUK CETAK ECERAN SATUAN
-                                        _cetakUlangPdf([v]);
+                                      // 3. TOMBOL CETAK ECERAN / SATUAN (DENGAN POPUP)
+                                      onTap: () async {
+                                        bool siapkanPrint = await _showKonfirmasiDialog(
+                                          "Cetak Voucher",
+                                          "Apakah Bos yakin ingin mencetak voucher: ${v['name']}?",
+                                          okText: "Cetak",
+                                          okColor: Colors.blue,
+                                        );
+                                        if (siapkanPrint) _cetakUlangPdf([v]);
                                       },
+                                      // 4. TOMBOL HAPUS ECERAN SATUAN VOUCHER (DENGAN POPUP)
+                                      trailing: IconButton(
+                                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 22),
+                                        tooltip: "Hapus Voucher Ini",
+                                        onPressed: () => _hapusVoucherTunggal(v['id'] ?? '', v['name'] ?? '-'),
+                                      ),
                                     );
                                   }).toList(),
                                 ),
