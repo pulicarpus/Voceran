@@ -71,7 +71,8 @@ class _TabProfilState extends State<TabProfil> {
     setState(() => _isLoading = true);
 
     // Script sakti pembersih voucher otomatis saat durasi habis
-    String scriptPembersihOtomatis = r':local uuser $user; :if ([/ip hotspot user get [find name=$uuser] uptime] = [/ip hotspot user get [find name=$uuser] limit-uptime]) do={ /ip hotspot user remove [find name=$uuser]; }';
+    // Ganti baris scriptPembersihOtomatis lama Bos dengan versi LEBIH AMAN (>=) ini:
+String scriptPembersihOtomatis = r':local uuser $user; :local utime [/ip hotspot user get [find name=$uuser] uptime]; :local ltime [/ip hotspot user get [find name=$uuser] limit-uptime]; :if ($utime >= $ltime) do={ /ip hotspot user remove [find name=$uuser]; }';
     
     List<List<String>> command = [[
       '/ip/hotspot/user/profile/add',
