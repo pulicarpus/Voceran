@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'mikrotik_api.dart';
 
 class TabVoucher extends StatefulWidget {
-  final String ip, user, pass;
-  const TabVoucher({super.key, required this.ip, required this.user, required this.pass});
+  const TabVoucher({super.key});
 
   @override
   State<TabVoucher> createState() => _TabVoucherState();
@@ -15,8 +14,8 @@ class _TabVoucherState extends State<TabVoucher> {
 
   void _loadVouchers() async {
     setState(() => _isLoading = true);
-    // Mengambil daftar user dari MikroTik
-    var res = await MikrotikAPI.run(widget.ip, widget.user, widget.pass, [['/ip/hotspot/user/print']]);
+    // Hanya 1 argumen
+    var res = await MikrotikAPI.run([['/ip/hotspot/user/print']]);
     
     List<Map<String, String>> temp = [];
     Map<String, String> current = {};
@@ -25,8 +24,11 @@ class _TabVoucherState extends State<TabVoucher> {
       if (item == '!re') {
         if (current.isNotEmpty) temp.add(Map.from(current));
         current.clear();
-      } else if (item.startsWith('=name=')) current['name'] = item.substring(6);
-      else if (item.startsWith('=profile=')) current['profile'] = item.substring(9);
+      } else if (item.startsWith('=name=')) {
+        current['name'] = item.substring(6);
+      } else if (item.startsWith('=profile=')) {
+        current['profile'] = item.substring(9);
+      }
     }
     
     setState(() {
@@ -44,7 +46,7 @@ class _TabVoucherState extends State<TabVoucher> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Daftar Voucher"), actions: [
+      appBar: AppBar(title: const Text("Daftar Voucher"), centerTitle: true, actions: [
         IconButton(icon: const Icon(Icons.refresh), onPressed: _loadVouchers)
       ]),
       body: _isLoading 
@@ -60,7 +62,7 @@ class _TabVoucherState extends State<TabVoucher> {
                 child: ListTile(
                   leading: const CircleAvatar(backgroundColor: Colors.blueAccent, child: Icon(Icons.vpn_key, color: Colors.white)),
                   title: Text(v['name'] ?? "No Name", style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text("Profil: ${v['profile']}"),
+                  subtitle: Text("Profil: ${v['profile'] ?? '-'}"),
                   trailing: const Icon(Icons.chevron_right),
                 ),
               );
