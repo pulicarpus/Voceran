@@ -15,7 +15,7 @@ class TabCetak extends StatefulWidget {
 class _TabCetakState extends State<TabCetak> {
   List<String> _listProfil = [];
   String? _selectedProfile;
-  final TextEditingController _qtyController = TextEditingController(text: '72'); // Default langsung 72 (1 lembar full)
+  final TextEditingController _qtyController = TextEditingController(text: '72'); 
   final TextEditingController _uptimeController = TextEditingController(text: '1h');
   bool _isLoading = false;
 
@@ -69,27 +69,45 @@ class _TabCetakState extends State<TabCetak> {
     var response = await MikrotikAPI.run(batchCommands);
     setState(() => _isLoading = false);
 
-    if (response.contains("ERROR")) {
+    // ==========================================
+    // ENGINE DETEKSI ERROR (TRAP CATCHER)
+    // ==========================================
+    if (response.contains("ERROR") || response.contains("!trap")) {
+      String pesanError = "Gagal mendaftarkan ke MikroTik!";
+      
+      // Cari detail pesan error dari MikroTik
+      int trapIndex = response.indexOf("!trap");
+      if (trapIndex != -1) {
+        for (int j = trapIndex; j < response.length; j++) {
+          if (response[j].startsWith("=message=")) {
+            pesanError = "MikroTik: ${response[j].substring(9)}";
+            break;
+          }
+        }
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Gagal mendaftarkan ke MikroTik!")),
+          SnackBar(
+            content: Text(pesanError, style: const TextStyle(fontWeight: FontWeight.bold)),
+            backgroundColor: Colors.redAccent,
+            duration: const Duration(seconds: 5),
+          ),
         );
       }
-      return;
+      return; // Stop di sini, jangan buka PDF karena gagal ke router
     }
 
-    // DESAIN MINI VOUCHER (Muat hingga 72 Voucher per A4)
+    // JIKA BERHASIL, BARU CETAK PDF
     final pdf = pw.Document();
     pdf.addPage(pw.Page(
       pageFormat: PdfPageFormat.a4,
-      margin: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 20), // Margin tipis agar muat banyak
+      margin: const pw.EdgeInsets.symmetric(horizontal: 15, vertical: 15), 
       build: (pw.Context context) {
         return pw.Wrap(
-          spacing: 5,     // Jarak antar kolom
-          runSpacing: 5,  // Jarak antar baris
+          spacing: 5, runSpacing: 5,
           children: List.generate(qty, (index) => pw.Container(
-            width: 88,    // Ukuran presisi untuk 6 kolom
-            height: 62,   // Ukuran presisi untuk 12 baris
+            width: 88, height: 62,
             padding: const pw.EdgeInsets.all(4),
             decoration: pw.BoxDecoration(
               border: pw.Border.all(color: PdfColors.grey800, width: 1),
@@ -102,7 +120,7 @@ class _TabCetakState extends State<TabCetak> {
                 pw.Container(
                   padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                   decoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                  child: pw.Text(kodeVouchers[index], style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12, color: PdfColors.blue900)),
+                  child: pw.Text(kodeVouchers[index], style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11, color: PdfColors.blue900)),
                 ),
                 pw.Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -124,10 +142,7 @@ class _TabCetakState extends State<TabCetak> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Menu Cetak Voucher", style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text("Menu Cetak Voucher", style: TextStyle(fontWeight: FontWeight.bold)), centerTitle: true),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -159,9 +174,7 @@ class _TabCetakState extends State<TabCetak> {
                       icon: const Icon(Icons.print),
                       label: const Text("Cetak Sekarang"),
                       onPressed: _selectedProfile == null ? null : _prosesCetakDanSimpan,
-                      style: ElevatedButton.styleFrom(
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
+                      style: ElevatedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                     ),
                   ),
                   const SizedBox(height: 15),
