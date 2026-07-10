@@ -41,7 +41,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   String _statusMessage = 'Sistem Siap Digunakan. Silakan Cek Koneksi.';
 
   // ---------------------------------------------------------------------------
-  // CONTROLLER PENGATURAN ROUTER (TAB 5)
+  // CONTROLLER PENGATURAN ROUTER
   // ---------------------------------------------------------------------------
   final TextEditingController _ipController = TextEditingController(text: '10.10.10.1');
   final TextEditingController _userController = TextEditingController(text: 'admin');
@@ -72,10 +72,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // DATA STATE APLIKASI
   // ---------------------------------------------------------------------------
   List<Map<String, String>> _listProfilHotspot = [
-    {'nama': 'Paket_1Jam', 'limit': '1h'},
-    {'nama': 'Paket_2Jam', 'limit': '2h'},
+    {'nama': 'Paket_1Jam (Contoh)', 'limit': '1h'}
   ];
-  String? _selectedProfile = 'Paket_1Jam';
+  String? _selectedProfile;
   List<String> _lastGeneratedCodes = [];
   List<Map<String, String>> _activeUsersList = [];
   List<Map<String, String>> _allVouchersList = [];
@@ -83,10 +82,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   void initState() {
     super.initState();
-    if (_listProfilHotspot.isNotEmpty) {
-      _selectedProfile = _listProfilHotspot[0]['nama'];
-      _bulkUptimeController.text = _listProfilHotspot[0]['limit']!;
-    }
+    _selectedProfile = _listProfilHotspot[0]['nama'];
     _searchController.addListener(() {
       setState(() {
         _searchQuery = _searchController.text.trim().toLowerCase();
@@ -134,6 +130,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             currentProf['nama'] = word.substring(6);
           } else if (word.startsWith('=limit-uptime=')) {
             currentProf['limit'] = word.substring(14);
+          } else if (word.startsWith('=session-timeout=')) { // FIX: Membaca parameter session-timeout
+            currentProf['limit'] = word.substring(17);
           }
         }
         if (currentProf.containsKey('nama')) tempProfiles.add(Map.from(currentProf));
@@ -159,11 +157,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // ENGINE SOKET API MIKROTIK
+  // ENGINE SOKET API MIKROTIK (FIX MESIN PEMBACA BYTE)
   // ---------------------------------------------------------------------------
   Future<List<String>> _communicatorMikrotik(List<List<String>> sentences) async {
     Socket? socket;
-    List<String> outputResponse = [];
     try {
       String ip = _ipController.text.trim();
       String user = _userController.text.trim();
@@ -188,7 +185,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       sendWord('=password=$pass');
       socket.add([0]);
       await socket.flush();
-      await Future.delayed(const Duration(milliseconds: 300));
+      await Future.delayed(const Duration(milliseconds: 200));
 
       for (var command in sentences) {
         for (var word in command) {
@@ -199,17 +196,39 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         await Future.delayed(const Duration(milliseconds: 50));
       }
 
-      StringBuffer buffer = StringBuffer();
+      // 🛠️ FIX PEMBACA KODE MIKROTIK: Mengupas binary length byte agar teks bisa terbaca
+      List<int> rawBytes = [];
       await socket.listen((List<int> data) {
-        buffer.write(utf8.decode(data, allowMalformed: true));
+        rawBytes.addAll(data);
       }).asFuture().timeout(const Duration(seconds: 2), onTimeout: () {});
 
-      outputResponse = buffer.toString().split('\x00');
-
-      if (buffer.toString().contains('!trap')) {
-        return ["ERROR_ROUTER_REJECTED"];
+      List<String> outputResponse = [];
+      int offset = 0;
+      while (offset < rawBytes.length) {
+        int b = rawBytes[offset++];
+        if (b == 0) continue; 
+        
+        int len = 0;
+        if (b < 0x80) {
+          len = b;
+        } else if (b < 0xC0) {
+          if (offset >= rawBytes.length) break;
+          len = ((b & 0x3F) << 8) | rawBytes[offset++];
+        } else {
+          break; // Hindari buffer nyangkut
+        }
+        
+        if (offset + len <= rawBytes.length) {
+          outputResponse.add(utf8.decode(rawBytes.sublist(offset, offset + len), allowMalformed: true));
+          offset += len;
+        } else {
+          break;
+        }
       }
 
+      if (outputResponse.contains('!trap')) {
+        return ["ERROR_ROUTER_REJECTED"];
+      }
       return outputResponse;
     } catch (e) {
       return ["ERROR_KONEKSI"];
@@ -366,7 +385,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // TAB 2: DAFTAR VOUCHER (BEBAS FILTER SUMBATAN)
+  // TAB 2: DAFTAR VOUCHER
   // ---------------------------------------------------------------------------
   Future<void> _fetchAllVouchersFromRouter() async {
     setState(() {
@@ -374,6 +393,30 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       _allVouchersList.clear();
     });
 
+    // 1. Tarik Profil dulu agar rapi
+    List<String> profCommand = ['/ip/hotspot/user/profile/print'];
+    List<String> rawProfWords = await _communicatorMikrotik([profCommand]);
+
+    List<Map<String, String>> tempProfiles = [];
+    Map<String, String> currentProf = {};
+
+    if (!rawProfWords.contains("ERROR_KONEKSI") && !rawProfWords.contains("ERROR_ROUTER_REJECTED")) {
+      for (String word in rawProfWords) {
+        if (word == '!re') {
+          if (currentProf.containsKey('nama')) tempProfiles.add(Map.from(currentProf));
+          currentProf.clear();
+        } else if (word.startsWith('=name=')) {
+          currentProf['nama'] = word.substring(6);
+        } else if (word.startsWith('=limit-uptime=')) {
+          currentProf['limit'] = word.substring(14);
+        } else if (word.startsWith('=session-timeout=')) {
+          currentProf['limit'] = word.substring(17);
+        }
+      }
+      if (currentProf.containsKey('nama')) tempProfiles.add(Map.from(currentProf));
+    }
+
+    // 2. Tarik Daftar Voucher
     List<String> command = ['/ip/hotspot/user/print'];
     List<String> rawWords = await _communicatorMikrotik([command]);
 
@@ -403,6 +446,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     setState(() {
       _isLoading = false;
       _allVouchersList = tempVouchers;
+      if (tempProfiles.isNotEmpty) {
+        _listProfilHotspot = tempProfiles;
+      }
     });
 
     if (rawWords.contains("ERROR_KONEKSI")) {
@@ -411,7 +457,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // TAB 3: BUAT PROFIL PAKET BARU (FIXED API STANDAR MIKROTIK)
+  // TAB 3: BUAT PROFIL PAKET BARU
   // ---------------------------------------------------------------------------
   Future<void> _createNewProfile() async {
     String profName = _newProfileNameController.text.trim();
@@ -803,7 +849,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           if (index == 1) _fetchAllVouchersFromRouter();
           if (index == 3) _fetchActiveUsersFromRouter();
         },
-        type: BottomNavigationBarType.fixed, // Mencegah 5 item saling tumpuk
+        type: BottomNavigationBarType.fixed,
         selectedItemColor: const Color(0xFF1E3A8A),
         unselectedItemColor: Colors.grey,
         items: const [
@@ -811,7 +857,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Voucher'),
           BottomNavigationBarItem(icon: Icon(Icons.add_to_photos), label: 'Profil'),
           BottomNavigationBarItem(icon: Icon(Icons.bolt), label: 'Aktif'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Router'), // Tab 5 hadir dengan gagah!
+          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Router'), 
         ],
       ),
     );
