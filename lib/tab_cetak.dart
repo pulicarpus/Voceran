@@ -69,13 +69,8 @@ class _TabCetakState extends State<TabCetak> {
     var response = await MikrotikAPI.run(batchCommands);
     setState(() => _isLoading = false);
 
-    // ==========================================
-    // ENGINE DETEKSI ERROR (TRAP CATCHER)
-    // ==========================================
     if (response.contains("ERROR") || response.contains("!trap")) {
       String pesanError = "Gagal mendaftarkan ke MikroTik!";
-      
-      // Cari detail pesan error dari MikroTik
       int trapIndex = response.indexOf("!trap");
       if (trapIndex != -1) {
         for (int j = trapIndex; j < response.length; j++) {
@@ -95,10 +90,9 @@ class _TabCetakState extends State<TabCetak> {
           ),
         );
       }
-      return; // Stop di sini, jangan buka PDF karena gagal ke router
+      return; 
     }
 
-    // JIKA BERHASIL, BARU CETAK PDF
     final pdf = pw.Document();
     pdf.addPage(pw.Page(
       pageFormat: PdfPageFormat.a4,
@@ -123,7 +117,8 @@ class _TabCetakState extends State<TabCetak> {
                   child: pw.Text(kodeVouchers[index], style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11, color: PdfColors.blue900)),
                 ),
                 pw.Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  // DI SINI SUDAH FIXED MENGGUNAKAN PW.
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Text("Up: $uptimeLimit", style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold)),
                     pw.Text("Profil: ${_selectedProfile ?? 'Def'}", style: const pw.TextStyle(fontSize: 5)),
