@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MikrotikAPI {
-  // Mengambil kredensial dari penyimpanan lokal (HP)
   static Future<Map<String, String>> _getAuth() async {
     final prefs = await SharedPreferences.getInstance();
     return {
@@ -17,25 +16,17 @@ class MikrotikAPI {
     final auth = await _getAuth();
     try {
       final socket = await Socket.connect(auth['ip']!, 8728, timeout: const Duration(seconds: 3));
-      
       void send(String w) {
         List<int> b = utf8.encode(w);
         socket.add(b.length < 128 ? [b.length] : [((b.length|0x8000)>>8)&0xFF, (b.length|0x8000)&0xFF]);
         socket.add(b);
       }
-
-      send('/login'); 
-      send('=name=${auth['user']}'); 
-      send('=password=${auth['pass']}'); 
-      socket.add([0]);
-      
+      send('/login'); send('=name=${auth['user']}'); send('=password=${auth['pass']}'); socket.add([0]);
       await Future.delayed(const Duration(milliseconds: 200));
       for(var c in cmds) { for(var w in c) send(w); socket.add([0]); }
-      
       List<int> raw = [];
       await socket.listen(raw.addAll).asFuture().timeout(const Duration(seconds: 2), onTimeout: (){});
       socket.destroy();
-      
       List<String> out = []; int i = 0;
       while(i < raw.length) {
         int b = raw[i++]; if(b==0) continue;
