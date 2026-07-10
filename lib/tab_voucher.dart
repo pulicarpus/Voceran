@@ -92,7 +92,7 @@ class _TabVoucherState extends State<TabVoucher> {
                 borderRadius: pw.BorderRadius.circular(4),
               ),
               child: pw.Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, // FIX: Menggunakan pw. agar tidak bentrok dengan material UI
                 children: [
                   pw.Text("WIFI HOTSPOT", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 7)),
                   pw.Container(
@@ -101,7 +101,7 @@ class _TabVoucherState extends State<TabVoucher> {
                     child: pw.Text(kode, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11, color: PdfColors.blue900)),
                   ),
                   pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, // FIX: Menggunakan pw. agar presisi di kertas PDF
                     children: [
                       pw.Text("Up: $uptime", style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold)),
                       pw.Text("Profil: $profil", style: const pw.TextStyle(fontSize: 5)),
@@ -143,7 +143,7 @@ class _TabVoucherState extends State<TabVoucher> {
       }
     } catch (e) {
       _showSnackBar("Terjadi kesalahan: $e", Colors.redAccent);
-    } final {
+    } finally { // FIX: Diubah dari 'final' menjadi 'finally' agar sintaksis Dart benar
       setState(() => _isLoading = false);
     }
   }
@@ -178,7 +178,7 @@ class _TabVoucherState extends State<TabVoucher> {
       _loadDaftarVoucher();
     } catch (e) {
       _showSnackBar("Terjadi kesalahan sistem: $e", Colors.redAccent);
-    } final {
+    } finally { // FIX: Diubah dari 'final' menjadi 'finally'
       setState(() => _isLoading = false);
     }
   }
