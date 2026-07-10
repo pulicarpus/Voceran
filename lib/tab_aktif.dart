@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'mikrotik_api.dart';
 
 class TabAktif extends StatefulWidget {
-  final String ip, user, pass;
-  const TabAktif({super.key, required this.ip, required this.user, required this.pass});
+  const TabAktif({super.key});
 
   @override
   State<TabAktif> createState() => _TabAktifState();
@@ -15,7 +14,8 @@ class _TabAktifState extends State<TabAktif> {
 
   void _loadActive() async {
     setState(() => _isLoading = true);
-    var res = await MikrotikAPI.run(widget.ip, widget.user, widget.pass, [['/ip/hotspot/active/print']]);
+    // Hanya 1 argumen
+    var res = await MikrotikAPI.run([['/ip/hotspot/active/print']]);
     
     List<Map<String, String>> temp = [];
     Map<String, String> current = {};
@@ -24,8 +24,11 @@ class _TabAktifState extends State<TabAktif> {
       if (item == '!re') {
         if (current.isNotEmpty) temp.add(Map.from(current));
         current.clear();
-      } else if (item.startsWith('=user=')) current['user'] = item.substring(6);
-      else if (item.startsWith('=address=')) current['address'] = item.substring(9);
+      } else if (item.startsWith('=user=')) {
+        current['user'] = item.substring(6);
+      } else if (item.startsWith('=address=')) {
+        current['address'] = item.substring(9);
+      }
     }
     
     setState(() {
@@ -43,7 +46,7 @@ class _TabAktifState extends State<TabAktif> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("User Aktif"), actions: [
+      appBar: AppBar(title: const Text("User Aktif"), centerTitle: true, actions: [
         IconButton(icon: const Icon(Icons.refresh), onPressed: _loadActive)
       ]),
       body: _isLoading 
@@ -60,11 +63,7 @@ class _TabAktifState extends State<TabAktif> {
                     child: ListTile(
                       leading: const CircleAvatar(backgroundColor: Colors.green, child: Icon(Icons.wifi, color: Colors.white)),
                       title: Text(u['user'] ?? "Unknown", style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text("IP: ${u['address']}"),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.power_settings_new, color: Colors.red),
-                        onPressed: () { /* Tambah logika kick user di sini */ },
-                      ),
+                      subtitle: Text("IP: ${u['address'] ?? '-'}"),
                     ),
                   );
                 },
