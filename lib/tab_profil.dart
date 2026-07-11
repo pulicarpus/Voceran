@@ -16,6 +16,12 @@ class _TabProfilState extends State<TabProfil> {
   List<Map<String, String>> _listProfil = [];
   bool _isLoading = false;
 
+  // Script sakti anti-jebol (Menggunakan >= agar pembulatan detik Mikrotik tetap terhapus otomatis)
+  final String _scriptPembersihOtomatis = 
+      r':local uuser $user; :local utime [/ip hotspot user get [find name=$uuser] uptime]; '
+      r':local ltime [/ip hotspot user get [find name=$uuser] limit-uptime]; '
+      r':if ($utime >= $ltime) do={ /ip hotspot user remove [find name=$uuser]; }';
+
   @override
   void initState() {
     super.initState();
@@ -69,10 +75,6 @@ class _TabProfilState extends State<TabProfil> {
     }
 
     setState(() => _isLoading = true);
-
-    // Script sakti pembersih voucher otomatis saat durasi habis
-    // Ganti baris scriptPembersihOtomatis lama Bos dengan versi LEBIH AMAN (>=) ini:
-String scriptPembersihOtomatis = r':local uuser $user; :local utime [/ip hotspot user get [find name=$uuser] uptime]; :local ltime [/ip hotspot user get [find name=$uuser] limit-uptime]; :if ($utime >= $ltime) do={ /ip hotspot user remove [find name=$uuser]; }';
     
     List<List<String>> command = [[
       '/ip/hotspot/user/profile/add',
@@ -80,7 +82,7 @@ String scriptPembersihOtomatis = r':local uuser $user; :local utime [/ip hotspot
       '=rate-limit=${_rateController.text.trim()}',
       '=session-timeout=${_timeController.text.trim()}',
       '=shared-users=1', // Secara default kita set 1 user per voucher
-      '=on-logout=$scriptPembersihOtomatis' // Suntikkan script di sini
+      '=on-logout=$_scriptPembersihOtomatis' // Menyuntikkan script anti-jebol baru
     ]];
 
     var response = await MikrotikAPI.run(command);
@@ -95,10 +97,9 @@ String scriptPembersihOtomatis = r':local uuser $user; :local utime [/ip hotspot
     }
   }
 
-  // 3. FUNGSI UPDATE / EDIT PROFIL LAMA
+  // 3. FUNGSI UPDATE / EDIT PROFIL LAMA (SUDAH DIPERBAIKI 🛠️)
   Future<void> _updateProfil(String id, String name, String rateLimit, String sessionTimeout, String sharedUsers) async {
     setState(() => _isLoading = true);
-    String scriptPembersihOtomatis = r':local uuser $user; :if ([/ip hotspot user get [find name=$uuser] uptime] = [/ip hotspot user get [find name=$uuser] limit-uptime]) do={ /ip hotspot user remove [find name=$uuser]; }';
 
     try {
       var response = await MikrotikAPI.run([
@@ -108,7 +109,7 @@ String scriptPembersihOtomatis = r':local uuser $user; :local utime [/ip hotspot
           '=rate-limit=$rateLimit',
           '=session-timeout=$sessionTimeout',
           '=shared-users=$sharedUsers',
-          '=on-logout=$scriptPembersihOtomatis' // Menyuntikkan script pembersih ke profil lama yang diedit
+          '=on-logout=$_scriptPembersihOtomatis' // SEKARANG SUDAH MENGGUNAKAN SCRIPT >= YANG AMAN
         ]
       ]);
 
@@ -201,12 +202,12 @@ String scriptPembersihOtomatis = r':local uuser $user; :local utime [/ip hotspot
         child: ListView(
           padding: const EdgeInsets.all(16.0),
           children: [
-            // BAGIAN 1: FORM INPUT (Dibungkus ExpansionTile Biar Fleksibel)
+            // BAGIAN 1: FORM INPUT
             Card(
               elevation: 3,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               child: ExpansionTile(
-                initiallyExpanded: _listProfil.isEmpty, // Otomatis terbuka jika list kosong
+                initiallyExpanded: _listProfil.isEmpty,
                 title: const Text("Buat Profil Baru", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.deepPurple)),
                 leading: const Icon(Icons.add_box, color: Colors.deepPurple),
                 children: [
@@ -240,7 +241,7 @@ String scriptPembersihOtomatis = r':local uuser $user; :local utime [/ip hotspot
             ),
             const SizedBox(height: 25),
             
-            // BAGIAN 2: LIST PROFIL YANG SUDAH TERSEDIA DI ROUTER
+            // BAGIAN 2: LIST PROFIL
             const Text("Daftar Profil Terpasang", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             
