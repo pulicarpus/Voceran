@@ -1,6 +1,6 @@
-name: Build Flutter APK Minimalist
+name: Build vArranger Controller APK
 
-# Memicu build secara MANUAL saja dari tab Actions di GitHub
+# Memicu build secara MANUAL dari tab Actions di GitHub
 on:
   workflow_dispatch:
 
@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Mengambil kode dari repositori GitHub bos
+      # 1. Mengambil kode dari repositori GitHub
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -27,35 +27,37 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # 4. Membuat base project dan menyalin file kustom dari HP bos
-      - name: Assemble Flutter Project Structure
+      # 4. Hapus struktur android usang (v1) & buat ulang struktur v2 modern
+      - name: Rebuild Clean Android Directory (v2 Embedding)
         run: |
-          flutter create voceran_app
-          cp -r lib voceran_app/
-          cp pubspec.yaml voceran_app/
-          cp -r android voceran_app/
+          rm -rf android
+          flutter create . --platforms=android --org=com.example --project-name=varranger_controller
+          
+          # Sisipkan Izin MIDI & Bluetooth otomatis ke AndroidManifest.xml
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          PERMISSIONS='    <uses-feature android:name="android.software.midi" android:required="true"/>\n    <uses-permission android:name="android.permission.BLUETOOTH" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />'
+          sed -i "/<manifest/a $PERMISSIONS" $MANIFEST
 
-      # 5. Mengunduh package/library dan build ke APK Release
+      # 5. Download pustaka MIDI dan Build APK Release
       - name: Build APK Release
         run: |
-          cd voceran_app
           flutter pub get
           flutter build apk --release
 
-      # 6. Upload file APK hasil build agar bisa bos download di browser (Bawaan)
+      # 6. Upload file APK hasil build ke GitHub Actions Artifacts
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: voceran-v6-pro-apk
-          path: voceran_app/build/app/outputs/flutter-apk/app-release.apk
+          name: varranger-controller-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
 
-      # 7. SAKTI: Kirim file APK otomatis langsung ke chat Telegram Bos (Anti-Lemot)
-      - name: Kirim APK ke Telegram Bos
+      # 7. Kirim file APK otomatis ke Telegram
+      - name: Kirim APK ke Telegram
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          document: voceran_app/build/app/outputs/flutter-apk/app-release.apk
+          document: build/app/outputs/flutter-apk/app-release.apk
           message: |
             🚀 *Build Sukses, Bos!*
-            Aplikasi Voceran Flutter versi terbaru sudah matang terakit. Silakan langsung unduh dan instal di HP lewat Telegram (Koneksi Starlink dijamin ngebut!).
+            Aplikasi vArranger2 Controller (Modern v2 Embedding) sudah matang terakit sempurna. Silakan diunduh!

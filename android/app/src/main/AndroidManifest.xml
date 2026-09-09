@@ -1,9 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Izin Internet (Bisa dipakai jika nanti menggunakan koneksi rtpMIDI/Wi-Fi) -->
     <uses-permission android:name="android.permission.INTERNET" />
     
-    
-      <application
-        android:label="Voceran MikroTik v6 Pro"
+    <!-- Izin & Fitur Wajib untuk flutter_midi_command (USB & Bluetooth MIDI) -->
+    <uses-feature android:name="android.software.midi" android:required="true"/>
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <application
+        android:label="vArranger Controller"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
