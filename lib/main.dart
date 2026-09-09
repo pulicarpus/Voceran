@@ -148,7 +148,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       decoration: BoxDecoration(
                         color: isSelected ? const Color(0xFFD96B27) : Colors.transparent,
-                        border: Border(right: BorderSide(color: Colors.black26)),
+                        border: const Border(right: BorderSide(color: Colors.black26)),
                       ),
                       child: Text(
                         tab,
@@ -293,7 +293,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
       decoration: BoxDecoration(
         color: const Color(0xFF21252B),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.black42),
+        border: Border.all(color: Colors.black38),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
