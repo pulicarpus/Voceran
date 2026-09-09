@@ -55,7 +55,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
     if (_selectedDevice != null) {
       // 0xB0 = Control Change pada MIDI Channel 1
       Uint8List midiData = Uint8List.fromList([0xB0, controllerNumber, value]);
-      // Menggunakan parameter `deviceId` sesuai API flutter_midi_command terbaru
       _midiCommand.sendData(midiData, timestamp: 0, deviceId: _selectedDevice?.id);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -87,7 +86,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
           children: [
             // Dropdown Pemilihan Perangkat MIDI
             Container(
-              padding: const EdgeInsets.horizontal(12, 4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
                 color: const Color(0xFF2A2A2A),
                 borderRadius: BorderRadius.circular(10),
