@@ -1,6 +1,6 @@
 name: Build vArranger Controller APK
 
-# Memicu build secara MANUAL saja dari tab Actions di GitHub
+# Memicu build secara MANUAL dari tab Actions di GitHub
 on:
   workflow_dispatch:
 
@@ -13,34 +13,45 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Setup Java JDK
+      # 2. Setup Java JDK (Wajib untuk kompilasi Android)
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 3. Setup SDK Flutter
+      # 3. Setup SDK Flutter versi stabil terbaru
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # 4. Mengunduh package/library dan build ke APK Release langsung di root
+      # 4. Hapus struktur android usang (v1) & buat ulang struktur v2 modern
+      - name: Rebuild Clean Android Directory (v2 Embedding)
+        run: |
+          rm -rf android
+          flutter create . --platforms=android --org=com.example --project-name=varranger_controller
+          
+          # Sisipkan Izin MIDI & Bluetooth otomatis ke AndroidManifest.xml
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          PERMISSIONS='    <uses-feature android:name="android.software.midi" android:required="true"/>\n    <uses-permission android:name="android.permission.BLUETOOTH" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />'
+          sed -i "/<manifest/a $PERMISSIONS" $MANIFEST
+
+      # 5. Download pustaka MIDI dan Build APK Release
       - name: Build APK Release
         run: |
           flutter pub get
           flutter build apk --release
 
-      # 5. Upload file APK hasil build ke GitHub Actions
+      # 6. Upload file APK hasil build ke GitHub Actions Artifacts
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: varranger-controller-apk
           path: build/app/outputs/flutter-apk/app-release.apk
 
-      # 6. Kirim file APK otomatis langsung ke Telegram
+      # 7. Kirim file APK otomatis ke Telegram
       - name: Kirim APK ke Telegram
         uses: appleboy/telegram-action@master
         with:
@@ -48,5 +59,5 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           document: build/app/outputs/flutter-apk/app-release.apk
           message: |
-            🚀 *Build Sukses!*
-            Aplikasi vArranger2 Controller versi terbaru sudah matang terakit. Silakan langsung unduh dan instal di HP lewat Telegram.
+            🚀 *Build Sukses, Bos!*
+            Aplikasi vArranger2 Controller (Modern v2 Embedding) sudah matang terakit sempurna. Silakan diunduh!
