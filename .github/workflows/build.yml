@@ -9,53 +9,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Mengambil kode dari repositori GitHub bos
+      # 1. Mengambil kode dari repositori GitHub
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Setup Java JDK (Wajib untuk kompilasi Android)
+      # 2. Setup Java JDK
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 3. Setup SDK Flutter versi stabil terbaru
+      # 3. Setup SDK Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # 4. Membuat base project dan menyalin file kustom dari HP bos
-      - name: Assemble Flutter Project Structure
-        run: |
-          flutter create varranger_controller
-          cp -r lib varranger_controller/
-          cp pubspec.yaml varranger_controller/
-          cp -r android varranger_controller/
-
-      # 5. Mengunduh package/library dan build ke APK Release
+      # 4. Mengunduh package/library dan build ke APK Release langsung di root
       - name: Build APK Release
         run: |
-          cd varranger_controller
           flutter pub get
           flutter build apk --release
 
-      # 6. Upload file APK hasil build agar bisa bos download di browser (Bawaan)
+      # 5. Upload file APK hasil build ke GitHub Actions
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: varranger-controller-apk
-          path: varranger_controller/build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-release.apk
 
-      # 7. SAKTI: Kirim file APK otomatis langsung ke chat Telegram Bos (Anti-Lemot)
-      - name: Kirim APK ke Telegram Bos
+      # 6. Kirim file APK otomatis langsung ke Telegram
+      - name: Kirim APK ke Telegram
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          document: varranger_controller/build/app/outputs/flutter-apk/app-release.apk
+          document: build/app/outputs/flutter-apk/app-release.apk
           message: |
-            🚀 *Build Sukses, Bos!*
-            Aplikasi vArranger2 Controller versi terbaru sudah matang terakit. Silakan langsung unduh dan instal di HP lewat Telegram (Koneksi Starlink dijamin ngebut!).
+            🚀 *Build Sukses!*
+            Aplikasi vArranger2 Controller versi terbaru sudah matang terakit. Silakan langsung unduh dan instal di HP lewat Telegram.
