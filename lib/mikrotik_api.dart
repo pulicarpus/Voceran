@@ -1,432 +1,295 @@
-import 'dart:math';
-import 'package:flutter/material.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'mikrotik_api.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
-class TabCetak extends StatefulWidget {
-  const TabCetak({super.key});
+import 'package:shared_preferences/shared_preferences.dart';
 
-  @override
-  State<TabCetak> createState() => _TabCetakState();
-}
+class MikrotikAPI {
+  static const int _apiPort = 8728;
+  static const Duration _connectTimeout = Duration(seconds: 5);
+  static const Duration _responseTimeout = Duration(seconds: 5);
 
-class _TabCetakState extends State<TabCetak> {
-  final _qtyController = TextEditingController(text: '72');
-  final _uptimeController = TextEditingController(text: '1h');
-
-  List<String> _profiles = [];
-  String? _selectedProfile;
-  bool _isLoading = false;
-  bool _isLoadingProfiles = false;
-
-  static const int _columns = 6;
-  static const int _rows = 12;
-  static const int _perPage = _columns * _rows;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadProfiles();
+  static Future<Map<String, String>> _getAuth() async {
+    final prefs = await SharedPreferences.getInstance();
+    return {
+      'ip': prefs.getString('ip')?.trim() ?? '10.10.10.1',
+      'user': prefs.getString('user')?.trim() ?? 'admin',
+      'pass': prefs.getString('pass') ?? '',
+    };
   }
 
-  @override
-  void dispose() {
-    _qtyController.dispose();
-    _uptimeController.dispose();
-    super.dispose();
-  }
+  static Future<List<String>> run(List<List<String>> commands) async {
+    if (commands.isEmpty) return [];
 
-  Future<void> _loadProfiles() async {
-    if (_isLoadingProfiles) return;
+    final auth = await _getAuth();
+    if (auth['ip']!.isEmpty || auth['user']!.isEmpty) {
+      return ['ERROR', '!trap', '=message=Konfigurasi router belum lengkap'];
+    }
 
-    setState(() => _isLoadingProfiles = true);
+    Socket? socket;
+    _RouterOsReader? reader;
 
     try {
-      final response = await MikrotikAPI.run([
-        ['/ip/hotspot/user/profile/print'],
+      socket = await Socket.connect(
+        auth['ip']!,
+        _apiPort,
+        timeout: _connectTimeout,
+      );
+      socket.setOption(SocketOption.tcpNoDelay, true);
+
+      reader = _RouterOsReader(socket);
+      reader.start();
+
+      final login = await _sendSentenceAndWait(socket, reader, [
+        '/login',
+        '=name=${auth['user']}',
+        '=password=${auth['pass']}',
       ]);
 
-      if (!mounted) return;
+      if (login.contains('!trap') || login.contains('!fatal') || login.contains('ERROR')) {
+        return login;
+      }
 
-      final profiles = <String>{};
+      final result = <String>[];
 
-      for (final word in response) {
-        if (word.startsWith('=name=')) {
-          final name = word.substring('=name='.length).trim();
-          if (name.isNotEmpty) {
-            profiles.add(name);
-          }
+      for (final command in commands) {
+        if (command.isEmpty) continue;
+        final response = await _sendSentenceAndWait(socket, reader, command);
+        result.addAll(response);
+
+        if (response.contains('!trap') ||
+            response.contains('!fatal') ||
+            response.contains('ERROR')) {
+          break;
         }
       }
 
-      final sorted = profiles.toList()..sort();
-
-      setState(() {
-        _profiles = sorted;
-        if (_selectedProfile != null &&
-            !_profiles.contains(_selectedProfile)) {
-          _selectedProfile = null;
-        }
-      });
+      return result;
+    } on SocketException catch (e) {
+      return ['ERROR', '=message=Tidak dapat terhubung ke MikroTik: ${e.message}'];
+    } on TimeoutException {
+      return ['ERROR', '=message=Timeout menunggu respons MikroTik'];
     } catch (e) {
-      if (mounted) {
-        _showMessage('Gagal membaca profile: $e');
-      }
+      return ['ERROR', '=message=$e'];
     } finally {
-      if (mounted) {
-        setState(() => _isLoadingProfiles = false);
-      }
+      reader?.dispose();
+      try {
+        socket?.destroy();
+      } catch (_) {}
     }
   }
 
-  String _generateCode(Random random) {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  static Future<List<String>> _sendSentenceAndWait(
+    Socket socket,
+    _RouterOsReader reader,
+    List<String> words,
+  ) async {
+    for (final word in words) {
+      final bytes = utf8.encode(word);
+      socket.add(_encodeLength(bytes.length));
+      socket.add(bytes);
+    }
 
-    return List.generate(
-      6,
-      (_) => chars[random.nextInt(chars.length)],
-    ).join();
+    socket.add(const <int>[0]);
+    await socket.flush();
+
+    return reader.nextSentence().timeout(_responseTimeout);
   }
 
-  bool _hasRouterError(List<String> response) {
-    return response.contains('!trap') ||
-        response.contains('!fatal') ||
-        response.contains('ERROR');
-  }
-
-  String _extractRouterMessage(List<String> response) {
-    for (final word in response) {
-      if (word.startsWith('=message=')) {
-        return word.substring('=message='.length).trim();
-      }
+  static List<int> _encodeLength(int length) {
+    if (length < 0x80) return [length];
+    if (length < 0x4000) {
+      return [((length >> 8) | 0x80) & 0xFF, length & 0xFF];
     }
-
-    return 'RouterOS menolak perintah.';
-  }
-
-  Future<void> _prosesCetakDanSimpan() async {
-    if (_isLoading) return;
-
-    final profile = _selectedProfile;
-    final qty = int.tryParse(_qtyController.text.trim());
-    final uptime = _uptimeController.text.trim();
-
-    if (profile == null || profile.isEmpty) {
-      _showMessage('Pilih profile terlebih dahulu.');
-      return;
-    }
-
-    if (qty == null || qty < 1) {
-      _showMessage('Jumlah voucher minimal 1.');
-      return;
-    }
-
-    if (qty > 5000) {
-      _showMessage('Jumlah maksimal 5000 voucher per proses.');
-      return;
-    }
-
-    if (uptime.isEmpty) {
-      _showMessage('Isi masa aktif / limit uptime.');
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      final random = Random.secure();
-      final codes = <String>[];
-      final used = <String>{};
-
-      while (codes.length < qty) {
-        final code = _generateCode(random);
-        if (used.add(code)) {
-          codes.add(code);
-        }
-      }
-
-      final commands = <List<String>>[];
-
-      for (final code in codes) {
-        commands.add([
-          '/ip/hotspot/user/add',
-          '=name=$code',
-          '=password=$code',
-          '=profile=$profile',
-          '=limit-uptime=$uptime',
-          '=comment=Voucher',
-        ]);
-      }
-
-      final response = await MikrotikAPI.run(commands);
-
-      if (!mounted) return;
-
-      if (_hasRouterError(response)) {
-        _showMessage(
-          'Gagal membuat voucher: ${_extractRouterMessage(response)}',
-        );
-        return;
-      }
-
-      await _cetakPdfMultiPage(
-        codes: codes,
-        profile: profile,
-        uptime: uptime,
-      );
-    } catch (e) {
-      if (mounted) {
-        _showMessage('Gagal mencetak voucher: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _cetakPdfMultiPage({
-    required List<String> codes,
-    required String profile,
-    required String uptime,
-  }) async {
-    final totalPages = (codes.length + _perPage - 1) ~/ _perPage;
-
-    if (mounted) {
-      _showMessage(
-        '${codes.length} voucher akan dicetak menjadi $totalPages halaman A4.',
-      );
-    }
-
-    final pdf = pw.Document();
-
-    for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
-      final start = pageIndex * _perPage;
-      final end = min(start + _perPage, codes.length);
-
-      final pageCodes = codes.sublist(start, end);
-
-      final cards = <pw.Widget>[
-        for (final code in pageCodes) _buildVoucherCard(
-          code: code,
-          profile: profile,
-          uptime: uptime,
-        ),
+    if (length < 0x200000) {
+      return [
+        ((length >> 16) | 0xC0) & 0xFF,
+        (length >> 8) & 0xFF,
+        length & 0xFF,
       ];
-
-      // Setiap pw.Page di sini adalah SATU halaman PDF.
-      // Tidak menggunakan Wrap yang bergantung pada pagination.
-      pdf.addPage(
-        pw.Page(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(15),
-          build: (_) {
-            return pw.Column(
-              children: [
-                pw.Expanded(
-                  child: pw.Wrap(
-                    spacing: 5,
-                    runSpacing: 5,
-                    children: cards,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      );
     }
-
-    final pdfBytes = await pdf.save();
-
-    // Validasi sederhana: dokumen harus mempunyai jumlah halaman
-    // sesuai jumlah batch sebelum diberikan ke Android Print Spooler.
-    if (pdfBytes.isEmpty) {
-      throw Exception('PDF kosong.');
+    if (length < 0x10000000) {
+      return [
+        ((length >> 24) | 0xE0) & 0xFF,
+        (length >> 16) & 0xFF,
+        (length >> 8) & 0xFF,
+        length & 0xFF,
+      ];
     }
-
-    await Printing.layoutPdf(
-      name: 'voceran_${codes.length}_${totalPages}halaman.pdf',
-      format: PdfPageFormat.a4,
-      onLayout: (_) async => pdfBytes,
-    );
-
-    if (mounted) {
-      _showMessage(
-        'PDF siap: ${codes.length} voucher / $totalPages halaman A4.',
-      );
-    }
+    return [
+      0xF0,
+      (length >> 24) & 0xFF,
+      (length >> 16) & 0xFF,
+      (length >> 8) & 0xFF,
+      length & 0xFF,
+    ];
   }
+}
 
-  pw.Widget _buildVoucherCard({
-    required String code,
-    required String profile,
-    required String uptime,
-  }) {
-    return pw.Container(
-      width: 88,
-      height: 62,
-      padding: const pw.EdgeInsets.all(5),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(width: 0.8),
-        borderRadius: pw.BorderRadius.circular(4),
-      ),
-      child: pw.Column(
-        mainAxisAlignment: pw.MainAxisAlignment.center,
-        crossAxisAlignment: pw.CrossAxisAlignment.center,
-        children: [
-          pw.Text(
-            'WIFI HOTSPOT',
-            style: pw.TextStyle(
-              fontSize: 8,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
-          pw.SizedBox(height: 4),
-          pw.Text(
-            code,
-            style: pw.TextStyle(
-              fontSize: 15,
-              fontWeight: pw.FontWeight.bold,
-              letterSpacing: 1.2,
-            ),
-          ),
-          pw.SizedBox(height: 3),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                'Up: $uptime',
-                style: pw.TextStyle(
-                  fontSize: 6.5,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.Text(
-                'Profil: $profile',
-                style: const pw.TextStyle(fontSize: 6.5),
-              ),
-            ],
-          ),
-        ],
-      ),
+class _RouterOsReader {
+  final Socket socket;
+  final List<int> _buffer = <int>[];
+  final List<Completer<List<String>>> _pending = <Completer<List<String>>>[];
+
+  StreamSubscription<List<int>>? _subscription;
+  List<String> _currentWords = <String>[];
+  bool _started = false;
+  bool _closed = false;
+
+  _RouterOsReader(this.socket);
+
+  void start() {
+    if (_started) return;
+    _started = true;
+
+    _subscription = socket.listen(
+      (data) {
+        if (_closed) return;
+        _buffer.addAll(data);
+        try {
+          _parse();
+        } catch (e) {
+          _failCurrent(e);
+        }
+      },
+      onError: (Object error) => _failAll(error),
+      onDone: () {
+        if (!_closed) {
+          _failAll(const SocketException(
+            'Koneksi MikroTik ditutup sebelum response selesai',
+          ));
+        }
+      },
+      cancelOnError: false,
     );
   }
 
-  void _showMessage(String message) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          duration: const Duration(seconds: 4),
-        ),
+  Future<List<String>> nextSentence() {
+    if (_closed) {
+      return Future.error(
+        const SocketException('RouterOS reader sudah ditutup'),
       );
+    }
+
+    final completer = Completer<List<String>>();
+    _pending.add(completer);
+    _parse();
+    return completer.future;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Cetak Voucher'),
-        actions: [
-          IconButton(
-            onPressed: _isLoadingProfiles ? null : _loadProfiles,
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh profile',
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: _isLoadingProfiles
-            ? const Center(
-                child: CircularProgressIndicator(),
-              )
-            : SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      value: _selectedProfile,
-                      decoration: const InputDecoration(
-                        labelText: 'Profile Hotspot',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: _profiles
-                          .map(
-                            (profile) => DropdownMenuItem<String>(
-                              value: profile,
-                              child: Text(profile),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _isLoading
-                          ? null
-                          : (value) {
-                              setState(() => _selectedProfile = value);
-                            },
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _qtyController,
-                      enabled: !_isLoading,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Jumlah voucher',
-                        hintText: 'Contoh: 72, 73, 100, 200',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _uptimeController,
-                      enabled: !_isLoading,
-                      decoration: const InputDecoration(
-                        labelText: 'Masa aktif / limit uptime',
-                        hintText: 'Contoh: 1h, 2h, 1d',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      height: 52,
-                      child: ElevatedButton.icon(
-                        onPressed: _isLoading
-                            ? null
-                            : _prosesCetakDanSimpan,
-                        icon: _isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.print),
-                        label: Text(
-                          _isLoading
-                              ? 'Memproses...'
-                              : 'Buat & Cetak Voucher',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '6 × 12 = 72 voucher per halaman A4. '
-                      'Jumlah di atas 72 otomatis dibuat menjadi '
-                      'beberapa halaman.',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-      ),
-    );
+  void _parse() {
+    while (!_closed && _buffer.isNotEmpty) {
+      if (_buffer[0] == 0) {
+        _buffer.removeAt(0);
+        continue;
+      }
+
+      final info = _decodeLength(_buffer);
+      if (info == null) return;
+
+      final total = info.headerLength + info.length;
+      if (_buffer.length < total) return;
+
+      final wordBytes = _buffer.sublist(info.headerLength, total);
+      _buffer.removeRange(0, total);
+
+      final word = utf8.decode(wordBytes, allowMalformed: true);
+      _currentWords.add(word);
+
+      if (word == '!done' || word == '!fatal') {
+        _completeCurrent();
+      }
+    }
   }
+
+  void _completeCurrent() {
+    if (_pending.isEmpty) {
+      _currentWords = <String>[];
+      return;
+    }
+
+    final completer = _pending.removeAt(0);
+    if (!completer.isCompleted) {
+      completer.complete(List<String>.from(_currentWords));
+    }
+    _currentWords = <String>[];
+  }
+
+  void _failCurrent(Object error) {
+    if (_pending.isEmpty) return;
+    final completer = _pending.removeAt(0);
+    if (!completer.isCompleted) completer.completeError(error);
+    _currentWords = <String>[];
+  }
+
+  void _failAll(Object error) {
+    for (final completer in _pending) {
+      if (!completer.isCompleted) completer.completeError(error);
+    }
+    _pending.clear();
+    _currentWords = <String>[];
+  }
+
+  void dispose() {
+    if (_closed) return;
+    _closed = true;
+    _failAll(const SocketException('RouterOS reader dihentikan'));
+    _subscription?.cancel();
+    _subscription = null;
+  }
+
+  _LengthInfo? _decodeLength(List<int> data) {
+    if (data.isEmpty) return null;
+    final first = data[0];
+
+    if ((first & 0x80) == 0) {
+      return _LengthInfo(length: first, headerLength: 1);
+    }
+    if ((first & 0xC0) == 0x80) {
+      if (data.length < 2) return null;
+      return _LengthInfo(
+        length: ((first & 0x3F) << 8) | data[1],
+        headerLength: 2,
+      );
+    }
+    if ((first & 0xE0) == 0xC0) {
+      if (data.length < 3) return null;
+      return _LengthInfo(
+        length: ((first & 0x1F) << 16) | (data[1] << 8) | data[2],
+        headerLength: 3,
+      );
+    }
+    if ((first & 0xF0) == 0xE0) {
+      if (data.length < 4) return null;
+      return _LengthInfo(
+        length: ((first & 0x0F) << 24) |
+            (data[1] << 16) |
+            (data[2] << 8) |
+            data[3],
+        headerLength: 4,
+      );
+    }
+    if (first == 0xF0) {
+      if (data.length < 5) return null;
+      return _LengthInfo(
+        length: (data[1] << 24) |
+            (data[2] << 16) |
+            (data[3] << 8) |
+            data[4],
+        headerLength: 5,
+      );
+    }
+
+    throw const FormatException('Invalid RouterOS API length prefix');
+  }
+}
+
+class _LengthInfo {
+  final int length;
+  final int headerLength;
+
+  const _LengthInfo({
+    required this.length,
+    required this.headerLength,
+  });
 }
