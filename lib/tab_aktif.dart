@@ -11,8 +11,6 @@ class TabAktif extends StatefulWidget {
 class _TabAktifState extends State<TabAktif> {
   List<Map<String, String>> _listUserAktif = [];
   bool _isLoading = false;
-  
-  // Variabel untuk mengontrol apakah sedang menampilkan list detail atau tidak
   bool _showDetailList = false;
 
   @override
@@ -21,77 +19,210 @@ class _TabAktifState extends State<TabAktif> {
     _fetchUserAktif();
   }
 
-  // 1. FUNGSI AMBIL DATA USER AKTIF DARI MIKROTIK
   Future<void> _fetchUserAktif() async {
-    setState(() => _isLoading = true);
+    if (_isLoading) return;
+
+    if (mounted) {
+      setState(() => _isLoading = true);
+    }
 
     try {
-      var res = await MikrotikAPI.run([['/ip/hotspot/active/print']]);
-      
-      List<Map<String, String>> tempUsers = [];
-      Map<String, String> currentUser = {};
+      final response = await MikrotikAPI.run([
+        ['/ip/hotspot/active/print'],
+      ]);
 
-      // Parser data flat list dari MikroTik API
-      for (var line in res) {
-        if (line.startsWith('=.id=')) {
-          if (currentUser.isNotEmpty) {
-            tempUsers.add(currentUser);
-            currentUser = {};
-          }
-          currentUser['id'] = line.substring(5);
-        } else if (line.startsWith('=user=')) {
-          currentUser['user'] = line.substring(6);
-        } else if (line.startsWith('=address=')) {
-          currentUser['address'] = line.substring(9);
-        } else if (line.startsWith('=uptime=')) {
-          currentUser['uptime'] = line.substring(8);
-        } else if (line.startsWith('=mac-address=')) {
-          currentUser['mac'] = line.substring(13);
-        }
+      if (!mounted) return;
+
+      if (_isErrorResponse(response)) {
+        final message = _extractRouterMessage(response);
+
+        setState(() => _isLoading = false);
+
+        _showSnackBar(
+          'Gagal mengambil data: $message',
+          Colors.redAccent,
+        );
+        return;
       }
-      
-      if (currentUser.isNotEmpty) {
-        tempUsers.add(currentUser);
-      }
+
+      final users = _parseActiveUserResponse(response);
 
       setState(() {
-        _listUserAktif = tempUsers;
+        _listUserAktif = users;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
+
       setState(() => _isLoading = false);
-      _showSnackBar("Gagal mengambil data: $e", Colors.redAccent);
+
+      _showSnackBar(
+        'Gagal mengambil data: $e',
+        Colors.redAccent,
+      );
     }
   }
 
-  // 2. FUNGSI KICK / DISCONNECT USER
-  Future<void> _kickUser(String id, String username) async {
+  List<Map<String, String>> _parseActiveUserResponse(
+    List<String> response,
+  ) {
+    final users = <Map<String, String>>[];
+    Map<String, String>? current;
+
+    void finishCurrent() {
+      if (current == null || current!.isEmpty) return;
+
+      final id = current!['id'];
+      final user = current!['user'];
+
+      if ((id != null && id.trim().isNotEmpty) ||
+          (user != null && user.trim().isNotEmpty)) {
+        users.add(Map<String, String>.from(current!));
+      }
+
+      current = null;
+    }
+
+    for (final line in response) {
+      if (line == '!re') {
+        finishCurrent();
+        current = <String, String>{};
+        continue;
+      }
+
+      if (line == '!done') {
+        finishCurrent();
+        continue;
+      }
+
+      if (line == '!trap' || line == '!fatal') {
+        continue;
+      }
+
+      if (line.startsWith('=.id=')) {
+        current ??= <String, String>{};
+        current!['id'] = line.substring(5);
+        continue;
+      }
+
+      if (line.startsWith('=user=')) {
+        current ??= <String, String>{};
+        current!['user'] = line.substring(6);
+        continue;
+      }
+
+      if (line.startsWith('=address=')) {
+        current ??= <String, String>{};
+        current!['address'] = line.substring(9);
+        continue;
+      }
+
+      if (line.startsWith('=uptime=')) {
+        current ??= <String, String>{};
+        current!['uptime'] = line.substring(8);
+        continue;
+      }
+
+      if (line.startsWith('=mac-address=')) {
+        current ??= <String, String>{};
+        current!['mac'] = line.substring(13);
+        continue;
+      }
+    }
+
+    finishCurrent();
+
+    return users;
+  }
+
+  bool _isErrorResponse(List<String> response) {
+    return response.contains('ERROR') ||
+        response.contains('!trap') ||
+        response.contains('!fatal');
+  }
+
+  String _extractRouterMessage(List<String> response) {
+    for (final line in response) {
+      if (line.startsWith('=message=')) {
+        return line.substring(9);
+      }
+    }
+
+    for (final line in response) {
+      if (line.startsWith('=category=')) {
+        return 'RouterOS category: ${line.substring(10)}';
+      }
+    }
+
+    return 'RouterOS tidak memberikan detail error.';
+  }
+
+  Future<void> _kickUser(
+    String id,
+    String username,
+  ) async {
+    if (id.trim().isEmpty) {
+      _showSnackBar(
+        'ID sesi user tidak ditemukan.',
+        Colors.redAccent,
+      );
+      return;
+    }
+
+    if (_isLoading) return;
+
     setState(() => _isLoading = true);
-    
+
     try {
-      var response = await MikrotikAPI.run([
-        ['/ip/hotspot/active/remove', '=.id=$id']
+      final response = await MikrotikAPI.run([
+        [
+          '/ip/hotspot/active/remove',
+          '=.id=$id',
+        ],
       ]);
 
-      setState(() => _isLoading = false);
+      if (!mounted) return;
 
-      if (response.contains("ERROR") || response.contains("!trap")) {
-        _showSnackBar("Gagal memutuskan koneksi $username", Colors.redAccent);
+      if (_isErrorResponse(response)) {
+        _showSnackBar(
+          'Gagal memutuskan koneksi $username: '
+          '${_extractRouterMessage(response)}',
+          Colors.redAccent,
+        );
       } else {
-        _showSnackBar("User $username berhasil diputus!", Colors.green);
-        _fetchUserAktif(); // Refresh data otomatis setelah di-kick
+        _showSnackBar(
+          'User $username berhasil diputus.',
+          Colors.green,
+        );
       }
     } catch (e) {
-      setState(() => _isLoading = false);
-      _showSnackBar("Error: $e", Colors.redAccent);
+      if (mounted) {
+        _showSnackBar(
+          'Error: $e',
+          Colors.redAccent,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
+
+    await _fetchUserAktif();
   }
 
-  void _showSnackBar(String message, Color color) {
+  void _showSnackBar(
+    String message,
+    Color color,
+  ) {
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(
+          message,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
         backgroundColor: color,
         duration: const Duration(seconds: 2),
       ),
@@ -102,38 +233,46 @@ class _TabAktifState extends State<TabAktif> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // Mengubah judul AppBar secara dinamis berdasarkan view yang aktif
         title: Text(
-          _showDetailList ? "Detail User Aktif" : "Dashboard Aktif", 
-          style: const TextStyle(fontWeight: FontWeight.bold)
+          _showDetailList
+              ? 'Detail User Aktif'
+              : 'Dashboard Aktif',
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
         ),
         centerTitle: true,
-        leading: _showDetailList 
+        leading: _showDetailList
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
-                onPressed: () {
-                  setState(() {
-                    _showDetailList = false; // Tombol kembali ke tampilan Grid
-                  });
-                },
+                onPressed: _isLoading
+                    ? null
+                    : () {
+                        setState(() {
+                          _showDetailList = false;
+                        });
+                      },
               )
             : null,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _fetchUserAktif,
-          )
+            onPressed: _isLoading
+                ? null
+                : _fetchUserAktif,
+          ),
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _showDetailList 
-              ? _buildListView()   // Tampilan 2: List Detail User Aktif
-              : _buildGridView(),  // Tampilan 1: Kotak Grid Jumlah Aktif
+          ? const Center(
+              child: CircularProgressIndicator(),
+            )
+          : _showDetailList
+              ? _buildListView()
+              : _buildGridView(),
     );
   }
 
-  // ================= TAMPILAN 1: GRID VIEW (KOTAK RINGKASAN JUMLAH) =================
   Widget _buildGridView() {
     return GridView.count(
       crossAxisCount: 2,
@@ -141,63 +280,101 @@ class _TabAktifState extends State<TabAktif> {
       mainAxisSpacing: 16,
       crossAxisSpacing: 16,
       children: [
-        // Kotak Grid Utama untuk User Aktif
         Card(
           elevation: 4,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
           color: Colors.deepPurple,
           child: InkWell(
             borderRadius: BorderRadius.circular(15),
             onTap: () {
-              // Jika ditekan, pindah ke halaman list detail
+              if (!mounted) return;
+
               setState(() {
                 _showDetailList = true;
               });
             },
             child: Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.all(16),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisAlignment:
+                    MainAxisAlignment.center,
+                crossAxisAlignment:
+                    CrossAxisAlignment.center,
                 children: [
-                  const Icon(Icons.people, size: 48, color: Colors.white),
+                  const Icon(
+                    Icons.people,
+                    size: 48,
+                    color: Colors.white,
+                  ),
                   const SizedBox(height: 12),
                   const Text(
-                    "USER AKTIF",
-                    style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 14),
+                    'USER AKTIF',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    "${_listUserAktif.length}",
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 32),
+                    '${_listUserAktif.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 32,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    "Ketuk untuk Detail",
-                    style: TextStyle(color: Colors.white60, fontSize: 11, fontStyle: FontStyle.italic),
+                    'Ketuk untuk Detail',
+                    style: TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
         ),
-        
-        // Kotak Variasi Tambahan (Bisa Bos gunakan untuk info lain ke depannya)
         Card(
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.all(16),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment:
+                  MainAxisAlignment.center,
               children: [
-                Icon(Icons.wifi, size: 40, color: _listUserAktif.isEmpty ? Colors.grey : Colors.green),
+                Icon(
+                  Icons.wifi,
+                  size: 40,
+                  color: _listUserAktif.isEmpty
+                      ? Colors.grey
+                      : Colors.green,
+                ),
                 const SizedBox(height: 12),
-                const Text("Status Hotspot", style: TextStyle(color: Colors.grey, fontSize: 12)),
+                const Text(
+                  'Status Hotspot',
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
-                  _listUserAktif.isEmpty ? "Sepi" : "Ramai Lancar",
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  _listUserAktif.isEmpty
+                      ? 'Sepi'
+                      : 'Ramai Lancar',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
               ],
             ),
@@ -207,24 +384,39 @@ class _TabAktifState extends State<TabAktif> {
     );
   }
 
-  // ================= TAMPILAN 2: LIST VIEW (DETAIL USER & TOMBOL KICK) =================
   Widget _buildListView() {
     if (_listUserAktif.isEmpty) {
       return Center(
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment:
+              MainAxisAlignment.center,
           children: [
-            Icon(Icons.wifi_off, size: 64, color: Colors.grey[400]),
+            Icon(
+              Icons.wifi_off,
+              size: 64,
+              color: Colors.grey[400],
+            ),
             const SizedBox(height: 10),
             Text(
-              "Tidak ada user aktif",
-              style: TextStyle(color: Colors.grey[600], fontSize: 16),
+              'Tidak ada user aktif',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 16,
+              ),
             ),
             const SizedBox(height: 15),
             ElevatedButton(
-              onPressed: () => setState(() => _showDetailList = false),
-              child: const Text("Kembali ke Dashboard"),
-            )
+              onPressed: _isLoading
+                  ? null
+                  : () {
+                      setState(() {
+                        _showDetailList = false;
+                      });
+                    },
+              child: const Text(
+                'Kembali ke Dashboard',
+              ),
+            ),
           ],
         ),
       );
@@ -237,39 +429,65 @@ class _TabAktifState extends State<TabAktif> {
         itemCount: _listUserAktif.length,
         itemBuilder: (context, index) {
           final user = _listUserAktif[index];
+
           return Card(
             elevation: 3,
-            margin: const EdgeInsets.symmetric(vertical: 6),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            margin: const EdgeInsets.symmetric(
+              vertical: 6,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
             child: ListTile(
               leading: const CircleAvatar(
                 backgroundColor: Colors.deepPurple,
-                child: Icon(Icons.person, color: Colors.white),
+                child: Icon(
+                  Icons.person,
+                  color: Colors.white,
+                ),
               ),
               title: Text(
                 user['user'] ?? 'Unknown',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
               subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 4),
-                  Text("IP: ${user['address'] ?? '-'}"),
-                  Text("MAC: ${user['mac'] ?? '-'}"),
                   Text(
-                    "Uptime: ${user['uptime'] ?? '-'}",
-                    style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                    'IP: ${user['address'] ?? '-'}',
+                  ),
+                  Text(
+                    'MAC: ${user['mac'] ?? '-'}',
+                  ),
+                  Text(
+                    'Uptime: ${user['uptime'] ?? '-'}',
+                    style: const TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ],
               ),
-              // Tombol Diskonek / Kick
               trailing: IconButton(
-                icon: const Icon(Icons.flash_off, color: Colors.redAccent, size: 28),
-                tooltip: "Putuskan Sesi",
-                onPressed: () {
-                  // Memicu popup dialog konfirmasi Ya/Tidak
-                  _showKickDialog(user['id'] ?? '', user['user'] ?? '');
-                },
+                icon: const Icon(
+                  Icons.flash_off,
+                  color: Colors.redAccent,
+                  size: 28,
+                ),
+                tooltip: 'Putuskan Sesi',
+                onPressed: _isLoading
+                    ? null
+                    : () {
+                        _showKickDialog(
+                          user['id'] ?? '',
+                          user['user'] ?? '',
+                        );
+                      },
               ),
             ),
           );
@@ -278,41 +496,85 @@ class _TabAktifState extends State<TabAktif> {
     );
   }
 
-  // ================= POPUP DIALOG KONFIRMASI (YA / TIDAK) =================
-  void _showKickDialog(String id, String username) {
-    showDialog(
+  Future<void> _showKickDialog(
+    String id,
+    String username,
+  ) async {
+    if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
       context: context,
-      barrierDismissible: false, // User wajib memilih tombol, tidak bisa asal ketuk luar screen
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
-            SizedBox(width: 8),
-            Text("Putuskan Koneksi?", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: Text("Apakah Bos yakin ingin men-kick user '$username' secara paksa dari jaringan?"),
-        actions: [
-          // Tombol TIDAK / BATAL
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Batal", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
           ),
-          // Tombol YA / KICK
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // Tutup dialog dulu
-              _kickUser(id, username); // Jalankan fungsi kick ke MikroTik
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          title: const Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.redAccent,
+              ),
+              SizedBox(width: 8),
+              Text(
+                'Putuskan Koneksi?',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            "Apakah Bos yakin ingin men-kick "
+            "user '$username' secara paksa dari jaringan?",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  false,
+                );
+              },
+              child: const Text(
+                'Batal',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
-            child: const Text("Ya, Kick!", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  true,
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                shape: RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'Ya, Kick!',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
+
+    if (confirmed == true && mounted) {
+      await _kickUser(id, username);
+    }
   }
 }
