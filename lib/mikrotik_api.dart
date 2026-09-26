@@ -19,10 +19,11 @@ class MikrotikAPI {
     };
   }
 
-  /// Menjalankan satu atau beberapa command RouterOS API.
+  /// Menjalankan command RouterOS API secara berurutan.
   ///
-  /// Setiap command dikirim sebagai satu sentence dan ditunggu
-  /// sampai RouterOS mengirim !done / !fatal.
+  /// Penting: Socket Stream hanya memiliki SATU listener yang dibuat
+  /// untuk seluruh koneksi. Ini mencegah:
+  /// "Bad state: Stream has already been listened to."
   static Future<List<String>> run(List<List<String>> commands) async {
     if (commands.isEmpty) {
       return [];
@@ -39,6 +40,7 @@ class MikrotikAPI {
     }
 
     Socket? socket;
+    _RouterOsReader? reader;
 
     try {
       socket = await Socket.connect(
@@ -49,20 +51,14 @@ class MikrotikAPI {
 
       socket.setOption(SocketOption.tcpNoDelay, true);
 
-      // IMPORTANT:
-      // Socket Stream adalah single-subscription stream.
-      // Versi lama mencoba listen() ulang untuk setiap command,
-      // sehingga setelah command pertama muncul:
-      // "Bad state: Stream has already been listened to."
-      //
-      // Broadcast stream memungkinkan setiap sentence membuat
-      // subscription baru setelah sentence sebelumnya selesai.
-      final input = socket.asBroadcastStream();
+      // SATU listener untuk seluruh umur socket.
+      reader = _RouterOsReader(socket);
+      reader.start();
 
-      // Login RouterOS v6.
+      // RouterOS v6 classic login.
       await _sendSentenceAndWait(
         socket,
-        input,
+        reader,
         [
           '/login',
           '=name=${auth['user']}',
@@ -79,7 +75,7 @@ class MikrotikAPI {
 
         final response = await _sendSentenceAndWait(
           socket,
-          input,
+          reader,
           command,
         );
 
@@ -107,6 +103,8 @@ class MikrotikAPI {
         '=message=$e',
       ];
     } finally {
+      reader?.dispose();
+
       try {
         socket?.destroy();
       } catch (_) {}
@@ -115,7 +113,7 @@ class MikrotikAPI {
 
   static Future<List<String>> _sendSentenceAndWait(
     Socket socket,
-    Stream<List<int>> input,
+    _RouterOsReader reader,
     List<String> words,
   ) async {
     for (final word in words) {
@@ -126,7 +124,7 @@ class MikrotikAPI {
     socket.add(const <int>[0]);
     await socket.flush();
 
-    return _readSentence(input);
+    return reader.nextSentence().timeout(_responseTimeout);
   }
 
   static void _sendWord(Socket socket, String word) {
@@ -174,116 +172,52 @@ class MikrotikAPI {
     ];
   }
 
-  static Future<List<String>> _readSentence(
-    Stream<List<int>> input,
-  ) async {
-    final completer = Completer<List<String>>();
-    final buffer = <int>[];
-    final words = <String>[];
+  static bool _containsTrap(List<String> response) {
+    return response.contains('!trap') ||
+        response.contains('!fatal') ||
+        response.contains('ERROR');
+  }
+}
 
-    StreamSubscription<List<int>>? subscription;
-    Timer? timeoutTimer;
+/// Satu parser/listener permanen untuk satu Socket RouterOS.
+///
+/// Setiap pemanggilan nextSentence() hanya menunggu hasil dari
+/// sentence berikutnya; tidak pernah memanggil listen() kedua kali.
+class _RouterOsReader {
+  final Socket socket;
 
-    void finish(List<String> result) {
-      if (completer.isCompleted) {
-        return;
-      }
+  final _buffer = <int>[];
+  final _pending = <Completer<List<String>>>[];
 
-      timeoutTimer?.cancel();
-      subscription?.cancel();
-      completer.complete(result);
-    }
+  StreamSubscription<List<int>>? _subscription;
+  List<String> _currentWords = <String>[];
+  bool _started = false;
+  bool _closed = false;
 
-    void fail(Object error) {
-      if (completer.isCompleted) {
-        return;
-      }
+  _RouterOsReader(this.socket);
 
-      timeoutTimer?.cancel();
-      subscription?.cancel();
-      completer.completeError(error);
-    }
+  void start() {
+    if (_started) return;
+    _started = true;
 
-    void parseBuffer() {
-      while (true) {
-        if (buffer.isEmpty) {
-          return;
-        }
-
-        // Empty word = end of sentence.
-        if (buffer[0] == 0) {
-          buffer.removeAt(0);
-          continue;
-        }
-
-        final lengthInfo = _decodeLength(buffer);
-
-        if (lengthInfo == null) {
-          return;
-        }
-
-        final headerLength = lengthInfo.headerLength;
-        final wordLength = lengthInfo.length;
-
-        if (buffer.length < headerLength + wordLength) {
-          return;
-        }
-
-        final start = headerLength;
-        final end = start + wordLength;
-
-        final wordBytes = buffer.sublist(start, end);
-        buffer.removeRange(0, end);
-
-        final word = utf8.decode(
-          wordBytes,
-          allowMalformed: true,
-        );
-
-        words.add(word);
-
-        if (word == '!done') {
-          finish(List<String>.from(words));
-          return;
-        }
-
-        if (word == '!fatal') {
-          finish(List<String>.from(words));
-          return;
-        }
-
-        // !trap biasanya diikuti =message=..., jadi teruskan
-        // membaca sampai !done / akhir response.
-      }
-    }
-
-    timeoutTimer = Timer(
-      _responseTimeout,
-      () {
-        fail(
-          const TimeoutException(
-            'Timeout menunggu response RouterOS API',
-          ),
-        );
-      },
-    );
-
-    subscription = input.listen(
+    _subscription = socket.listen(
       (data) {
-        buffer.addAll(data);
+        if (_closed) return;
+
+        _buffer.addAll(data);
 
         try {
-          parseBuffer();
+          _parse();
         } catch (e) {
-          fail(e);
+          _failCurrent(e);
         }
       },
       onError: (Object error) {
-        fail(error);
+        _failAll(error);
       },
       onDone: () {
-        if (!completer.isCompleted) {
-          fail(
+        if (!_closed) {
+          _failAll(
             const SocketException(
               'Koneksi MikroTik ditutup sebelum response selesai',
             ),
@@ -292,8 +226,116 @@ class MikrotikAPI {
       },
       cancelOnError: false,
     );
+  }
+
+  Future<List<String>> nextSentence() {
+    if (_closed) {
+      return Future.error(
+        const SocketException('RouterOS reader sudah ditutup'),
+      );
+    }
+
+    final completer = Completer<List<String>>();
+    _pending.add(completer);
+
+    // Response mungkin sudah masuk sangat cepat sebelum pemanggilan
+    // berikutnya. Parser tetap dijalankan terhadap buffer yang tersisa.
+    _parse();
 
     return completer.future;
+  }
+
+  void _parse() {
+    while (!_closed) {
+      if (_buffer.isEmpty) {
+        return;
+      }
+
+      // Empty word = separator akhir sentence.
+      if (_buffer[0] == 0) {
+        _buffer.removeAt(0);
+        continue;
+      }
+
+      final lengthInfo = _decodeLength(_buffer);
+
+      if (lengthInfo == null) {
+        return;
+      }
+
+      final total = lengthInfo.headerLength + lengthInfo.length;
+
+      if (_buffer.length < total) {
+        return;
+      }
+
+      final wordBytes = _buffer.sublist(
+        lengthInfo.headerLength,
+        total,
+      );
+
+      _buffer.removeRange(0, total);
+
+      final word = utf8.decode(
+        wordBytes,
+        allowMalformed: true,
+      );
+
+      _currentWords.add(word);
+
+      if (word == '!done' || word == '!fatal') {
+        _completeCurrent();
+      }
+    }
+  }
+
+  void _completeCurrent() {
+    if (_pending.isEmpty) {
+      _currentWords = <String>[];
+      return;
+    }
+
+    final completer = _pending.removeAt(0);
+
+    if (!completer.isCompleted) {
+      completer.complete(List<String>.from(_currentWords));
+    }
+
+    _currentWords = <String>[];
+  }
+
+  void _failCurrent(Object error) {
+    if (_pending.isEmpty) {
+      return;
+    }
+
+    final completer = _pending.removeAt(0);
+
+    if (!completer.isCompleted) {
+      completer.completeError(error);
+    }
+
+    _currentWords = <String>[];
+  }
+
+  void _failAll(Object error) {
+    for (final completer in _pending) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+
+    _pending.clear();
+    _currentWords = <String>[];
+  }
+
+  void dispose() {
+    _closed = true;
+    _failAll(
+      const SocketException('RouterOS reader dihentikan'),
+    );
+    _subscription?.cancel();
+    _subscription = null;
   }
 
   static _LengthInfo? _decodeLength(List<int> data) {
@@ -303,6 +345,7 @@ class MikrotikAPI {
 
     final first = data[0];
 
+    // 1 byte
     if ((first & 0x80) == 0) {
       return _LengthInfo(
         length: first,
@@ -310,67 +353,61 @@ class MikrotikAPI {
       );
     }
 
+    // 2 byte
     if ((first & 0xC0) == 0x80) {
       if (data.length < 2) {
         return null;
       }
 
-      final length =
-          ((first & 0x3F) << 8) |
-          data[1];
-
       return _LengthInfo(
-        length: length,
+        length: ((first & 0x3F) << 8) | data[1],
         headerLength: 2,
       );
     }
 
+    // 3 byte
     if ((first & 0xE0) == 0xC0) {
       if (data.length < 3) {
         return null;
       }
 
-      final length =
-          ((first & 0x1F) << 16) |
-          (data[1] << 8) |
-          data[2];
-
       return _LengthInfo(
-        length: length,
+        length:
+            ((first & 0x1F) << 16) |
+            (data[1] << 8) |
+            data[2],
         headerLength: 3,
       );
     }
 
+    // 4 byte
     if ((first & 0xF0) == 0xE0) {
       if (data.length < 4) {
         return null;
       }
 
-      final length =
-          ((first & 0x0F) << 24) |
-          (data[1] << 16) |
-          (data[2] << 8) |
-          data[3];
-
       return _LengthInfo(
-        length: length,
+        length:
+            ((first & 0x0F) << 24) |
+            (data[1] << 16) |
+            (data[2] << 8) |
+            data[3],
         headerLength: 4,
       );
     }
 
+    // 5 byte
     if (first == 0xF0) {
       if (data.length < 5) {
         return null;
       }
 
-      final length =
-          (data[1] << 24) |
-          (data[2] << 16) |
-          (data[3] << 8) |
-          data[4];
-
       return _LengthInfo(
-        length: length,
+        length:
+            (data[1] << 24) |
+            (data[2] << 16) |
+            (data[3] << 8) |
+            data[4],
         headerLength: 5,
       );
     }
@@ -378,12 +415,6 @@ class MikrotikAPI {
     throw const FormatException(
       'Invalid RouterOS API length prefix',
     );
-  }
-
-  static bool _containsTrap(List<String> response) {
-    return response.contains('!trap') ||
-        response.contains('!fatal') ||
-        response.contains('ERROR');
   }
 }
 
