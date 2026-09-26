@@ -31,9 +31,7 @@ class _TabVoucherState extends State<TabVoucher> {
   Future<void> _loadDaftarVoucher() async {
     if (_isLoading) return;
 
-    if (mounted) {
-      setState(() => _isLoading = true);
-    }
+    if (mounted) setState(() => _isLoading = true);
 
     try {
       final response = await MikrotikAPI.run([
@@ -45,10 +43,7 @@ class _TabVoucherState extends State<TabVoucher> {
       if (_isErrorResponse(response)) {
         final message = _extractRouterMessage(response);
         setState(() => _isLoading = false);
-        _showSnackBar(
-          'Gagal memuat voucher: $message',
-          Colors.redAccent,
-        );
+        _showSnackBar('Gagal memuat voucher: $message', Colors.redAccent);
         return;
       }
 
@@ -88,16 +83,11 @@ class _TabVoucherState extends State<TabVoucher> {
       if (!mounted) return;
 
       setState(() => _isLoading = false);
-      _showSnackBar(
-        'Gagal memuat voucher: $e',
-        Colors.redAccent,
-      );
+      _showSnackBar('Gagal memuat voucher: $e', Colors.redAccent);
     }
   }
 
-  List<Map<String, String>> _parseVoucherResponse(
-    List<String> response,
-  ) {
+  List<Map<String, String>> _parseVoucherResponse(List<String> response) {
     final vouchers = <Map<String, String>>[];
     Map<String, String>? current;
 
@@ -124,9 +114,7 @@ class _TabVoucherState extends State<TabVoucher> {
         continue;
       }
 
-      if (line == '!trap' || line == '!fatal') {
-        continue;
-      }
+      if (line == '!trap' || line == '!fatal') continue;
 
       if (line.startsWith('=.id=')) {
         current ??= <String, String>{};
@@ -155,7 +143,6 @@ class _TabVoucherState extends State<TabVoucher> {
       if (line.startsWith('=comment=')) {
         current ??= <String, String>{};
         current!['comment'] = line.substring(9);
-        continue;
       }
     }
 
@@ -171,9 +158,7 @@ class _TabVoucherState extends State<TabVoucher> {
 
   String _extractRouterMessage(List<String> response) {
     for (final line in response) {
-      if (line.startsWith('=message=')) {
-        return line.substring(9);
-      }
+      if (line.startsWith('=message=')) return line.substring(9);
     }
 
     for (final line in response) {
@@ -189,10 +174,7 @@ class _TabVoucherState extends State<TabVoucher> {
     List<Map<String, String>> vouchersToPrint,
   ) async {
     if (vouchersToPrint.isEmpty) {
-      _showSnackBar(
-        'Tidak ada voucher untuk dicetak.',
-        Colors.orange,
-      );
+      _showSnackBar('Tidak ada voucher untuk dicetak.', Colors.orange);
       return;
     }
 
@@ -208,35 +190,26 @@ class _TabVoucherState extends State<TabVoucher> {
 
       final pdf = pw.Document();
 
-      // Setiap pw.Page dibuat eksplisit.
-      // Tidak lagi memasukkan seluruh voucher ke satu Page.
-      for (int pageIndex = 0;
-          pageIndex < totalPages;
-          pageIndex++) {
+      for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
         final start = pageIndex * _perPage;
         final end = (start + _perPage > vouchersToPrint.length)
             ? vouchersToPrint.length
             : start + _perPage;
 
         final pageVouchers = vouchersToPrint.sublist(start, end);
-
         final cards = <pw.Widget>[];
 
         for (final voucher in pageVouchers) {
-          final kode =
-              voucher['name']?.trim().isNotEmpty == true
-                  ? voucher['name']!
-                  : '-';
-
+          final kode = voucher['name']?.trim().isNotEmpty == true
+              ? voucher['name']!
+              : '-';
           final uptime =
               voucher['limit-uptime']?.trim().isNotEmpty == true
                   ? voucher['limit-uptime']!
                   : '-';
-
-          final profil =
-              voucher['profile']?.trim().isNotEmpty == true
-                  ? voucher['profile']!
-                  : 'default';
+          final profil = voucher['profile']?.trim().isNotEmpty == true
+              ? voucher['profile']!
+              : 'default';
 
           cards.add(
             pw.Container(
@@ -244,15 +217,11 @@ class _TabVoucherState extends State<TabVoucher> {
               height: 62,
               padding: const pw.EdgeInsets.all(4),
               decoration: pw.BoxDecoration(
-                border: pw.Border.all(
-                  color: PdfColors.grey800,
-                  width: 1,
-                ),
+                border: pw.Border.all(color: PdfColors.grey800, width: 1),
                 borderRadius: pw.BorderRadius.circular(4),
               ),
               child: pw.Column(
-                mainAxisAlignment:
-                    pw.MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
                     'WIFI HOTSPOT',
@@ -279,8 +248,7 @@ class _TabVoucherState extends State<TabVoucher> {
                     ),
                   ),
                   pw.Row(
-                    mainAxisAlignment:
-                        pw.MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                     children: [
                       pw.Text(
                         'Up: $uptime',
@@ -308,26 +276,20 @@ class _TabVoucherState extends State<TabVoucher> {
               horizontal: 15,
               vertical: 15,
             ),
-            build: (_) {
-              return pw.Wrap(
-                spacing: 5,
-                runSpacing: 5,
-                children: cards,
-              );
-            },
+            build: (_) => pw.Wrap(
+              spacing: 5,
+              runSpacing: 5,
+              children: cards,
+            ),
           ),
         );
       }
 
       final pdfBytes = await pdf.save();
-
-      if (pdfBytes.isEmpty) {
-        throw Exception('PDF kosong.');
-      }
+      if (pdfBytes.isEmpty) throw Exception('PDF kosong.');
 
       await Printing.layoutPdf(
-        name: 'vouchers_${vouchersToPrint.length}_'
-            '${totalPages}halaman.pdf',
+        name: 'vouchers_${vouchersToPrint.length}_${totalPages}halaman.pdf',
         format: PdfPageFormat.a4,
         onLayout: (_) async => pdfBytes,
       );
@@ -340,22 +302,13 @@ class _TabVoucherState extends State<TabVoucher> {
         );
       }
     } catch (e) {
-      _showSnackBar(
-        'Gagal mencetak voucher: $e',
-        Colors.redAccent,
-      );
+      _showSnackBar('Gagal mencetak voucher: $e', Colors.redAccent);
     }
   }
 
-  Future<void> _hapusVoucherTunggal(
-    String id,
-    String name,
-  ) async {
+  Future<void> _hapusVoucherTunggal(String id, String name) async {
     if (id.trim().isEmpty) {
-      _showSnackBar(
-        'ID voucher tidak ditemukan.',
-        Colors.redAccent,
-      );
+      _showSnackBar('ID voucher tidak ditemukan.', Colors.redAccent);
       return;
     }
 
@@ -372,37 +325,25 @@ class _TabVoucherState extends State<TabVoucher> {
 
     try {
       final response = await MikrotikAPI.run([
-        [
-          '/ip/hotspot/user/remove',
-          '=.id=$id',
-        ],
+        ['/ip/hotspot/user/remove', '=.id=$id'],
       ]);
 
       if (!mounted) return;
 
       if (_isErrorResponse(response)) {
         _showSnackBar(
-          'Gagal menghapus voucher $name: '
-          '${_extractRouterMessage(response)}',
+          'Gagal menghapus voucher $name: ${_extractRouterMessage(response)}',
           Colors.redAccent,
         );
       } else {
-        _showSnackBar(
-          'Voucher $name berhasil dihapus.',
-          Colors.green,
-        );
+        _showSnackBar('Voucher $name berhasil dihapus.', Colors.green);
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar(
-          'Terjadi kesalahan: $e',
-          Colors.redAccent,
-        );
+        _showSnackBar('Terjadi kesalahan: $e', Colors.redAccent);
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
 
     await _loadDaftarVoucher();
@@ -433,7 +374,6 @@ class _TabVoucherState extends State<TabVoucher> {
 
       for (final voucher in targets) {
         final id = voucher['id'];
-
         if (id != null && id.trim().isNotEmpty) {
           batchCommand.add([
             '/ip/hotspot/user/remove',
@@ -443,10 +383,7 @@ class _TabVoucherState extends State<TabVoucher> {
       }
 
       if (batchCommand.isEmpty) {
-        _showSnackBar(
-          'Tidak ada ID voucher yang valid.',
-          Colors.redAccent,
-        );
+        _showSnackBar('Tidak ada ID voucher yang valid.', Colors.redAccent);
         return;
       }
 
@@ -462,8 +399,7 @@ class _TabVoucherState extends State<TabVoucher> {
         );
       } else {
         _showSnackBar(
-          '${targets.length} voucher grup '
-          '\'$commentName\' berhasil dihapus.',
+          '${targets.length} voucher grup \'$commentName\' berhasil dihapus.',
           Colors.green,
         );
       }
@@ -475,9 +411,7 @@ class _TabVoucherState extends State<TabVoucher> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
 
     await _loadDaftarVoucher();
@@ -502,15 +436,11 @@ class _TabVoucherState extends State<TabVoucher> {
           content: Text(message),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, false);
-              },
+              onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('Batal'),
             ),
             TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, true);
-              },
+              onPressed: () => Navigator.pop(dialogContext, true),
               child: Text(
                 okText,
                 style: TextStyle(
@@ -527,10 +457,7 @@ class _TabVoucherState extends State<TabVoucher> {
     return result ?? false;
   }
 
-  void _showSnackBar(
-    String message,
-    Color color,
-  ) {
+  void _showSnackBar(String message, Color color) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -547,29 +474,30 @@ class _TabVoucherState extends State<TabVoucher> {
   @override
   Widget build(BuildContext context) {
     final filteredList = _allVouchers.where((voucher) {
-      if (_selectedProfilFilter == 'Semua Profil') {
-        return true;
-      }
-
+      if (_selectedProfilFilter == 'Semua Profil') return true;
       return voucher['profile'] == _selectedProfilFilter;
     }).toList();
 
-    final groupedVouchers =
-        <String, List<Map<String, String>>>{};
+    final groupedVouchers = <String, List<Map<String, String>>>{};
 
     for (final voucher in filteredList) {
       final rawComment = voucher['comment']?.trim();
 
-      final groupKey =
-          rawComment == null || rawComment.isEmpty
-              ? 'Dibuat Manual / Tanpa Grup'
-              : rawComment;
+      // V3 menambahkan marker expiry ke comment:
+      // Voucher|EXPNS=<timestamp>
+      // Marker tersebut bukan grup baru.
+      final normalizedComment = rawComment == null
+          ? ''
+          : rawComment.split('|EXPNS=').first.trim();
+
+      final groupKey = normalizedComment.isEmpty
+          ? 'Dibuat Manual / Tanpa Grup'
+          : normalizedComment;
 
       groupedVouchers.putIfAbsent(
         groupKey,
         () => <Map<String, String>>[],
       );
-
       groupedVouchers[groupKey]!.add(voucher);
     }
 
@@ -613,10 +541,7 @@ class _TabVoucherState extends State<TabVoucher> {
                         ? null
                         : (value) {
                             if (value == null || !mounted) return;
-
-                            setState(() {
-                              _selectedProfilFilter = value;
-                            });
+                            setState(() => _selectedProfilFilter = value);
                           },
                   ),
                 ),
@@ -631,21 +556,15 @@ class _TabVoucherState extends State<TabVoucher> {
                       : RefreshIndicator(
                           onRefresh: _loadDaftarVoucher,
                           child: ListView.builder(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
                             itemCount: groupedVouchers.length,
                             itemBuilder: (context, index) {
                               final groupKey =
                                   groupedVouchers.keys.elementAt(index);
-
-                              final itemsInGroup =
-                                  groupedVouchers[groupKey]!;
+                              final itemsInGroup = groupedVouchers[groupKey]!;
 
                               return Card(
-                                margin: const EdgeInsets.symmetric(
-                                  vertical: 6,
-                                ),
+                                margin: const EdgeInsets.symmetric(vertical: 6),
                                 elevation: 2,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10),
@@ -713,62 +632,58 @@ class _TabVoucherState extends State<TabVoucher> {
                                       const Icon(Icons.expand_more),
                                     ],
                                   ),
-                                  children: itemsInGroup.map(
-                                    (voucher) {
-                                      final name = voucher['name'] ?? '-';
+                                  children: itemsInGroup.map((voucher) {
+                                    final name = voucher['name'] ?? '-';
 
-                                      return ListTile(
-                                        leading: const Icon(
-                                          Icons.vpn_key,
-                                          color: Colors.orangeAccent,
+                                    return ListTile(
+                                      leading: const Icon(
+                                        Icons.vpn_key,
+                                        color: Colors.orangeAccent,
+                                      ),
+                                      title: Text(
+                                        name,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          letterSpacing: 0.5,
                                         ),
-                                        title: Text(
-                                          name,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 0.5,
-                                          ),
+                                      ),
+                                      subtitle: Text(
+                                        'Profil: ${voucher['profile'] ?? '-'}'
+                                        ' | Limit: '
+                                        '${voucher['limit-uptime'] ?? '-'}',
+                                      ),
+                                      onTap: _isLoading
+                                          ? null
+                                          : () async {
+                                              final siap =
+                                                  await _showKonfirmasiDialog(
+                                                'Cetak Voucher',
+                                                'Apakah Bos yakin ingin '
+                                                    'mencetak voucher: $name?',
+                                                okText: 'Cetak',
+                                                okColor: Colors.blue,
+                                              );
+
+                                              if (siap && mounted) {
+                                                await _cetakUlangPdf([voucher]);
+                                              }
+                                            },
+                                      trailing: IconButton(
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.redAccent,
+                                          size: 22,
                                         ),
-                                        subtitle: Text(
-                                          'Profil: ${voucher['profile'] ?? '-'}'
-                                          ' | Limit: '
-                                          '${voucher['limit-uptime'] ?? '-'}',
-                                        ),
-                                        onTap: _isLoading
+                                        tooltip: 'Hapus Voucher Ini',
+                                        onPressed: _isLoading
                                             ? null
-                                            : () async {
-                                                final siap =
-                                                    await _showKonfirmasiDialog(
-                                                  'Cetak Voucher',
-                                                  'Apakah Bos yakin ingin '
-                                                      'mencetak voucher: $name?',
-                                                  okText: 'Cetak',
-                                                  okColor: Colors.blue,
-                                                );
-
-                                                if (siap && mounted) {
-                                                  await _cetakUlangPdf(
-                                                    [voucher],
-                                                  );
-                                                }
-                                              },
-                                        trailing: IconButton(
-                                          icon: const Icon(
-                                            Icons.delete_outline,
-                                            color: Colors.redAccent,
-                                            size: 22,
-                                          ),
-                                          tooltip: 'Hapus Voucher Ini',
-                                          onPressed: _isLoading
-                                              ? null
-                                              : () => _hapusVoucherTunggal(
-                                                    voucher['id'] ?? '',
-                                                    name,
-                                                  ),
-                                        ),
-                                      );
-                                    },
-                                  ).toList(),
+                                            : () => _hapusVoucherTunggal(
+                                                  voucher['id'] ?? '',
+                                                  name,
+                                                ),
+                                      ),
+                                    );
+                                  }).toList(),
                                 ),
                               );
                             },
