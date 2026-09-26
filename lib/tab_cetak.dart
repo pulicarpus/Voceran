@@ -1,10 +1,8 @@
 import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-
 import 'mikrotik_api.dart';
 
 class TabCetak extends StatefulWidget {
@@ -15,22 +13,18 @@ class TabCetak extends StatefulWidget {
 }
 
 class _TabCetakState extends State<TabCetak> {
-  final TextEditingController _qtyController =
-      TextEditingController(text: '72');
+  final _qtyController = TextEditingController(text: '72');
+  final _uptimeController = TextEditingController(text: '1h');
 
-  final TextEditingController _uptimeController =
-      TextEditingController(text: '1h');
-
-  final Random _random = Random();
-
-  List<String> _listProfil = [];
+  List<String> _profiles = [];
   String? _selectedProfile;
   bool _isLoading = false;
+  bool _isLoadingProfiles = false;
 
   @override
   void initState() {
     super.initState();
-    _loadProfil();
+    _loadProfiles();
   }
 
   @override
@@ -40,194 +34,138 @@ class _TabCetakState extends State<TabCetak> {
     super.dispose();
   }
 
-  String _generateKode() {
-    const chars =
-        'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-    return List.generate(
-      6,
-      (_) => chars[_random.nextInt(chars.length)],
-    ).join();
-  }
-
-  Future<void> _loadProfil() async {
-    if (_isLoading) return;
-
-    if (mounted) {
-      setState(() => _isLoading = true);
-    }
+  Future<void> _loadProfiles() async {
+    if (_isLoadingProfiles) return;
+    setState(() => _isLoadingProfiles = true);
 
     try {
       final response = await MikrotikAPI.run([
-        ['/ip/hotspot/user/profile/print'],
+        '/ip/hotspot/user/profile/print',
       ]);
 
       if (!mounted) return;
 
-      if (_isErrorResponse(response)) {
-        setState(() => _isLoading = false);
+      final profiles = <String>{};
 
-        _showSnackBar(
-          'Gagal memuat profil: '
-          '${_extractRouterMessage(response)}',
-          Colors.redAccent,
-        );
-
-        return;
-      }
-
-      final profiles = <String>[];
-      final seen = <String>{};
-
-      for (final line in response) {
-        if (!line.startsWith('=name=')) {
-          continue;
+      for (final row in response) {
+        if (row is Map) {
+          final name = row['=name']?.toString().trim() ??
+              row['name']?.toString().trim();
+          if (name != null && name.isNotEmpty) {
+            profiles.add(name);
+          }
         }
-
-        final name = line.substring(6).trim();
-
-        if (name.isEmpty || seen.contains(name)) {
-          continue;
-        }
-
-        seen.add(name);
-        profiles.add(name);
       }
 
-      profiles.sort(
-        (a, b) => a.toLowerCase().compareTo(
-              b.toLowerCase(),
-            ),
-      );
-
-      var selected = _selectedProfile;
-
-      if (selected == null ||
-          !profiles.contains(selected)) {
-        selected = profiles.isEmpty
-            ? null
-            : profiles.first;
-      }
+      final sorted = profiles.toList()..sort();
 
       setState(() {
-        _listProfil = profiles;
-        _selectedProfile = selected;
-        _isLoading = false;
+        _profiles = sorted;
+        if (_selectedProfile != null &&
+            !_profiles.contains(_selectedProfile)) {
+          _selectedProfile = null;
+        }
       });
     } catch (e) {
-      if (!mounted) return;
-
-      setState(() => _isLoading = false);
-
-      _showSnackBar(
-        'Gagal memuat profil: $e',
-        Colors.redAccent,
-      );
+      if (mounted) {
+        _showMessage('Gagal membaca profile: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingProfiles = false);
+      }
     }
+  }
+
+  String _generateCode(Random random) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return List.generate(
+      6,
+      (_) => chars[random.nextInt(chars.length)],
+    ).join();
   }
 
   Future<void> _prosesCetakDanSimpan() async {
     if (_isLoading) return;
 
-    final qty = int.tryParse(
-          _qtyController.text.trim(),
-        ) ??
-        0;
-
-    final uptimeLimit =
-        _uptimeController.text.trim();
-
-    final profile = _selectedProfile?.trim();
+    final profile = _selectedProfile;
+    final qty = int.tryParse(_qtyController.text.trim());
+    final uptime = _uptimeController.text.trim();
 
     if (profile == null || profile.isEmpty) {
-      _showSnackBar(
-        'Pilih profil terlebih dahulu.',
-        Colors.orange,
-      );
+      _showMessage('Pilih profile terlebih dahulu.');
       return;
     }
 
-    if (qty < 1) {
-      _showSnackBar(
-        'Jumlah voucher minimal 1.',
-        Colors.orange,
-      );
+    if (qty == null || qty < 1) {
+      _showMessage('Jumlah voucher minimal 1.');
       return;
     }
 
-    if (qty > 1000) {
-      _showSnackBar(
-        'Jumlah voucher maksimal 1000 per batch.',
-        Colors.orange,
-      );
+    // Multi-page PDF tidak lagi dibatasi satu lembar.
+    if (qty > 5000) {
+      _showMessage('Jumlah maksimal 5000 voucher per proses.');
       return;
     }
 
-    if (uptimeLimit.isEmpty) {
-      _showSnackBar(
-        'Kuota waktu / uptime tidak boleh kosong.',
-        Colors.orange,
-      );
+    if (uptime.isEmpty) {
+      _showMessage('Isi masa aktif voucher.');
       return;
     }
-
-    final kodeVouchers = <String>[];
-    final generated = <String>{};
-
-    while (kodeVouchers.length < qty) {
-      final kode = _generateKode();
-
-      if (generated.add(kode)) {
-        kodeVouchers.add(kode);
-      }
-    }
-
-    final batchCommands = <List<String>>[];
-
-    for (final kode in kodeVouchers) {
-      batchCommands.add([
-        '/ip/hotspot/user/add',
-        '=name=$kode',
-        '=password=$kode',
-        '=profile=$profile',
-        '=limit-uptime=$uptimeLimit',
-        '=comment=App-$profile',
-      ]);
-    }
-
-    if (!mounted) return;
 
     setState(() => _isLoading = true);
 
     try {
-      final response = await MikrotikAPI.run(
-        batchCommands,
-      );
+      final random = Random.secure();
+      final codes = <String>[];
+      final used = <String>{};
+
+      while (codes.length < qty) {
+        final code = _generateCode(random);
+        if (used.add(code)) {
+          codes.add(code);
+        }
+      }
+
+      final commands = <String>[];
+
+      for (final code in codes) {
+        commands.addAll([
+          '/ip/hotspot/user/add',
+          '=name=$code',
+          '=password=$code',
+          '=profile=$profile',
+          '=limit-uptime=$uptime',
+          '=comment=Voucher',
+        ]);
+      }
+
+      final response = await MikrotikAPI.run(commands);
 
       if (!mounted) return;
 
-      if (_isErrorResponse(response)) {
-        _showSnackBar(
-          'Gagal mendaftarkan voucher: '
-          '${_extractRouterMessage(response)}',
-          Colors.redAccent,
-          seconds: 5,
+      final hasError = response.any((row) {
+        if (row is! Map) return false;
+        final type = (row['type'] ?? row['=type'] ?? '').toString();
+        return type == '!trap' || type == '!fatal';
+      });
+
+      if (hasError) {
+        _showMessage(
+          'Gagal membuat voucher di MikroTik. Tidak mencetak PDF agar data tidak salah.',
         );
         return;
       }
 
-      await _cetakPdf(
-        kodeVouchers,
-        uptimeLimit,
-        profile,
+      await _cetakPdf(codes, profile, uptime);
+
+      if (!mounted) return;
+      _showMessage(
+        '$qty voucher berhasil dibuat dan PDF multi-halaman selesai dibuat.',
       );
     } catch (e) {
       if (mounted) {
-        _showSnackBar(
-          'Terjadi kesalahan saat membuat voucher: $e',
-          Colors.redAccent,
-          seconds: 5,
-        );
+        _showMessage('Gagal mencetak voucher: $e');
       }
     } finally {
       if (mounted) {
@@ -237,261 +175,208 @@ class _TabCetakState extends State<TabCetak> {
   }
 
   Future<void> _cetakPdf(
-    List<String> kodeVouchers,
-    String uptimeLimit,
+    List<String> codes,
     String profile,
+    String uptime,
   ) async {
-    if (kodeVouchers.isEmpty) return;
-
     final pdf = pw.Document();
 
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.symmetric(
-          horizontal: 15,
-          vertical: 15,
-        ),
-        build: (pw.Context context) {
-          return pw.Wrap(
-            spacing: 5,
-            runSpacing: 5,
-            children: List.generate(
-              kodeVouchers.length,
-              (index) {
-                return pw.Container(
-                  width: 88,
-                  height: 62,
-                  padding: const pw.EdgeInsets.all(4),
-                  decoration: pw.BoxDecoration(
-                    border: pw.Border.all(
-                      color: PdfColors.grey800,
-                      width: 1,
-                    ),
-                    borderRadius:
-                        pw.BorderRadius.circular(4),
-                  ),
-                  child: pw.Column(
-                    mainAxisAlignment:
-                        pw.MainAxisAlignment
-                            .spaceBetween,
-                    children: [
-                      pw.Text(
-                        'WIFI HOTSPOT',
-                        style: pw.TextStyle(
-                          fontWeight:
-                              pw.FontWeight.bold,
-                          fontSize: 7,
-                        ),
-                      ),
-                      pw.Container(
-                        padding:
-                            const pw.EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 1,
-                        ),
-                        decoration:
-                            const pw.BoxDecoration(
-                          color: PdfColors.grey200,
-                        ),
-                        child: pw.Text(
-                          kodeVouchers[index],
-                          style: pw.TextStyle(
-                            fontWeight:
-                                pw.FontWeight.bold,
-                            fontSize: 11,
-                            color:
-                                PdfColors.blue900,
-                          ),
-                        ),
-                      ),
-                      pw.Row(
-                        mainAxisAlignment:
-                            pw.MainAxisAlignment
-                                .spaceBetween,
-                        children: [
-                          pw.Text(
-                            'Up: $uptimeLimit',
-                            style: pw.TextStyle(
-                              fontSize: 6,
-                              fontWeight:
-                                  pw.FontWeight.bold,
-                            ),
-                          ),
-                          pw.Text(
-                            'Profil: $profile',
-                            style:
-                                const pw.TextStyle(
-                              fontSize: 5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              },
+    const cardWidth = 88.0;
+    const cardHeight = 62.0;
+    const horizontalGap = 5.0;
+    const verticalGap = 5.0;
+
+    // A4 dengan margin 15pt:
+    // area efektif kira-kira 565 x 812pt.
+    // 6 kolom x 12 baris = 72 voucher/halaman.
+    const columns = 6;
+    const rows = 12;
+    const perPage = columns * rows;
+
+    for (int start = 0; start < codes.length; start += perPage) {
+      final end = min(start + perPage, codes.length);
+      final pageCodes = codes.sublist(start, end);
+
+      final cards = <pw.Widget>[];
+
+      for (final code in pageCodes) {
+        cards.add(
+          pw.Container(
+            width: cardWidth,
+            height: cardHeight,
+            padding: const pw.EdgeInsets.all(5),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(width: 0.8),
+              borderRadius: pw.BorderRadius.circular(4),
             ),
-          );
-        },
-      ),
-    );
+            child: pw.Column(
+              mainAxisAlignment: pw.MainAxisAlignment.center,
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                pw.Text(
+                  'VOCERAN',
+                  style: pw.TextStyle(
+                    fontSize: 8,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                pw.Text(
+                  code,
+                  style: pw.TextStyle(
+                    fontSize: 15,
+                    fontWeight: pw.FontWeight.bold,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                pw.SizedBox(height: 3),
+                pw.Text(
+                  'User: $code',
+                  style: const pw.TextStyle(fontSize: 6.5),
+                ),
+                pw.Text(
+                  'Password: $code',
+                  style: const pw.TextStyle(fontSize: 6.5),
+                ),
+                pw.SizedBox(height: 2),
+                pw.Text(
+                  '$profile • $uptime',
+                  style: const pw.TextStyle(fontSize: 6.5),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(15),
+          build: (context) {
+            return pw.Wrap(
+              spacing: horizontalGap,
+              runSpacing: verticalGap,
+              children: cards,
+            );
+          },
+        ),
+      );
+    }
 
     await Printing.layoutPdf(
       onLayout: (format) async => pdf.save(),
+      name: 'voceran_${DateTime.now().millisecondsSinceEpoch}.pdf',
     );
   }
 
-  bool _isErrorResponse(List<String> response) {
-    return response.contains('ERROR') ||
-        response.contains('!trap') ||
-        response.contains('!fatal');
-  }
-
-  String _extractRouterMessage(
-    List<String> response,
-  ) {
-    for (final line in response) {
-      if (line.startsWith('=message=')) {
-        return line.substring(9);
-      }
-    }
-
-    for (final line in response) {
-      if (line.startsWith('=category=')) {
-        return 'RouterOS category: '
-            '${line.substring(10)}';
-      }
-    }
-
-    return 'RouterOS tidak memberikan detail error.';
-  }
-
-  void _showSnackBar(
-    String message,
-    Color color, {
-    int seconds = 3,
-  }) {
+  void _showMessage(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          message,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 3),
         ),
-        backgroundColor: color,
-        duration: Duration(seconds: seconds),
-      ),
-    );
+      );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Menu Cetak Voucher',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
+        title: const Text('Cetak Voucher'),
+        actions: [
+          IconButton(
+            onPressed: _isLoadingProfiles ? null : _loadProfiles,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh profile',
           ),
-        ),
-        centerTitle: true,
+        ],
       ),
-      body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(),
-            )
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  DropdownButtonFormField<String>(
-                    decoration:
-                        const InputDecoration(
-                      labelText: 'Pilih Profil',
-                      border: OutlineInputBorder(),
-                    ),
-                    value: _selectedProfile,
-                    items: _listProfil
-                        .map(
-                          (profile) =>
-                              DropdownMenuItem<String>(
-                            value: profile,
-                            child: Text(profile),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (!mounted) return;
-
-                      setState(() {
-                        _selectedProfile = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 15),
-                  TextField(
-                    controller: _uptimeController,
-                    decoration:
-                        const InputDecoration(
-                      labelText:
-                          'Kuota Waktu / Uptime (Contoh: 1h)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-                  TextField(
-                    controller: _qtyController,
-                    decoration:
-                        const InputDecoration(
-                      labelText: 'Jumlah Voucher',
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType:
-                        TextInputType.number,
-                  ),
-                  const SizedBox(height: 25),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.print),
-                      label: const Text(
-                        'Cetak Sekarang',
+      body: SafeArea(
+        child: _isLoadingProfiles
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: _selectedProfile,
+                      decoration: const InputDecoration(
+                        labelText: 'Profile Hotspot',
+                        border: OutlineInputBorder(),
                       ),
-                      onPressed:
-                          _selectedProfile == null
-                              ? null
-                              : _prosesCetakDanSimpan,
-                      style:
-                          ElevatedButton.styleFrom(
-                        shape:
-                            RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(
-                            10,
-                          ),
+                      items: _profiles
+                          .map(
+                            (profile) => DropdownMenuItem<String>(
+                              value: profile,
+                              child: Text(profile),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: _isLoading
+                          ? null
+                          : (value) {
+                              setState(() => _selectedProfile = value);
+                            },
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _qtyController,
+                      enabled: !_isLoading,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Jumlah voucher',
+                        hintText: 'Contoh: 72, 100, 200',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _uptimeController,
+                      enabled: !_isLoading,
+                      decoration: const InputDecoration(
+                        labelText: 'Masa aktif / limit uptime',
+                        hintText: 'Contoh: 1h, 2h, 1d',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: _isLoading ? null : _prosesCetakDanSimpan,
+                        icon: _isLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.print),
+                        label: Text(
+                          _isLoading
+                              ? 'Memproses...'
+                              : 'Buat & Cetak Voucher',
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 15),
-                  TextButton(
-                    onPressed:
-                        _isLoading ? null : _loadProfil,
-                    child: const Text(
-                      'Refresh List Profil',
-                      style: TextStyle(
-                        color: Colors.deepPurple,
-                      ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'PDF otomatis dibagi menjadi beberapa lembar A4. '
+                      'Setiap lembar berisi hingga 72 voucher.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 }
