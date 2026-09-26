@@ -18,6 +18,10 @@ class _TabVoucherState extends State<TabVoucher> {
   String _selectedProfilFilter = 'Semua Profil';
   bool _isLoading = false;
 
+  static const int _columns = 6;
+  static const int _rows = 12;
+  static const int _perPage = _columns * _rows;
+
   @override
   void initState() {
     super.initState();
@@ -193,107 +197,148 @@ class _TabVoucherState extends State<TabVoucher> {
     }
 
     try {
+      final totalPages =
+          (vouchersToPrint.length + _perPage - 1) ~/ _perPage;
+
+      _showSnackBar(
+        '${vouchersToPrint.length} voucher akan dicetak menjadi '
+        '$totalPages halaman A4.',
+        Colors.blue,
+      );
+
       final pdf = pw.Document();
 
-      pdf.addPage(
-        pw.Page(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.symmetric(
-            horizontal: 15,
-            vertical: 15,
-          ),
-          build: (pw.Context context) {
-            return pw.Wrap(
-              spacing: 5,
-              runSpacing: 5,
-              children: List.generate(
-                vouchersToPrint.length,
-                (index) {
-                  final voucher = vouchersToPrint[index];
+      // Setiap pw.Page dibuat eksplisit.
+      // Tidak lagi memasukkan seluruh voucher ke satu Page.
+      for (int pageIndex = 0;
+          pageIndex < totalPages;
+          pageIndex++) {
+        final start = pageIndex * _perPage;
+        final end = (start + _perPage > vouchersToPrint.length)
+            ? vouchersToPrint.length
+            : start + _perPage;
 
-                  final kode =
-                      voucher['name']?.trim().isNotEmpty == true
-                          ? voucher['name']!
-                          : '-';
+        final pageVouchers = vouchersToPrint.sublist(start, end);
 
-                  final uptime =
-                      voucher['limit-uptime']?.trim().isNotEmpty == true
-                          ? voucher['limit-uptime']!
-                          : '-';
+        final cards = <pw.Widget>[];
 
-                  final profil =
-                      voucher['profile']?.trim().isNotEmpty == true
-                          ? voucher['profile']!
-                          : 'default';
+        for (final voucher in pageVouchers) {
+          final kode =
+              voucher['name']?.trim().isNotEmpty == true
+                  ? voucher['name']!
+                  : '-';
 
-                  return pw.Container(
-                    width: 88,
-                    height: 62,
-                    padding: const pw.EdgeInsets.all(4),
-                    decoration: pw.BoxDecoration(
-                      border: pw.Border.all(
-                        color: PdfColors.grey800,
-                        width: 1,
-                      ),
-                      borderRadius: pw.BorderRadius.circular(4),
-                    ),
-                    child: pw.Column(
-                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                      children: [
-                        pw.Text(
-                          'WIFI HOTSPOT',
-                          style: pw.TextStyle(
-                            fontWeight: pw.FontWeight.bold,
-                            fontSize: 7,
-                          ),
-                        ),
-                        pw.Container(
-                          padding: const pw.EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 1,
-                          ),
-                          decoration: const pw.BoxDecoration(
-                            color: PdfColors.grey200,
-                          ),
-                          child: pw.Text(
-                            kode,
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                              color: PdfColors.blue900,
-                            ),
-                          ),
-                        ),
-                        pw.Row(
-                          mainAxisAlignment:
-                              pw.MainAxisAlignment.spaceBetween,
-                          children: [
-                            pw.Text(
-                              'Up: $uptime',
-                              style: pw.TextStyle(
-                                fontSize: 6,
-                                fontWeight: pw.FontWeight.bold,
-                              ),
-                            ),
-                            pw.Text(
-                              'Profil: $profil',
-                              style: const pw.TextStyle(fontSize: 5),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                },
+          final uptime =
+              voucher['limit-uptime']?.trim().isNotEmpty == true
+                  ? voucher['limit-uptime']!
+                  : '-';
+
+          final profil =
+              voucher['profile']?.trim().isNotEmpty == true
+                  ? voucher['profile']!
+                  : 'default';
+
+          cards.add(
+            pw.Container(
+              width: 88,
+              height: 62,
+              padding: const pw.EdgeInsets.all(4),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(
+                  color: PdfColors.grey800,
+                  width: 1,
+                ),
+                borderRadius: pw.BorderRadius.circular(4),
               ),
-            );
-          },
-        ),
-      );
+              child: pw.Column(
+                mainAxisAlignment:
+                    pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    'WIFI HOTSPOT',
+                    style: pw.TextStyle(
+                      fontWeight: pw.FontWeight.bold,
+                      fontSize: 7,
+                    ),
+                  ),
+                  pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColors.grey200,
+                    ),
+                    child: pw.Text(
+                      kode,
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                        color: PdfColors.blue900,
+                      ),
+                    ),
+                  ),
+                  pw.Row(
+                    mainAxisAlignment:
+                        pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Up: $uptime',
+                        style: pw.TextStyle(
+                          fontSize: 6,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                      pw.Text(
+                        'Profil: $profil',
+                        style: const pw.TextStyle(fontSize: 5),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        pdf.addPage(
+          pw.Page(
+            pageFormat: PdfPageFormat.a4,
+            margin: const pw.EdgeInsets.symmetric(
+              horizontal: 15,
+              vertical: 15,
+            ),
+            build: (_) {
+              return pw.Wrap(
+                spacing: 5,
+                runSpacing: 5,
+                children: cards,
+              );
+            },
+          ),
+        );
+      }
+
+      final pdfBytes = await pdf.save();
+
+      if (pdfBytes.isEmpty) {
+        throw Exception('PDF kosong.');
+      }
 
       await Printing.layoutPdf(
-        onLayout: (format) async => pdf.save(),
+        name: 'vouchers_${vouchersToPrint.length}_'
+            '${totalPages}halaman.pdf',
+        format: PdfPageFormat.a4,
+        onLayout: (_) async => pdfBytes,
       );
+
+      if (mounted) {
+        _showSnackBar(
+          'PDF siap: ${vouchersToPrint.length} voucher / '
+          '$totalPages halaman A4.',
+          Colors.green,
+        );
+      }
     } catch (e) {
       _showSnackBar(
         'Gagal mencetak voucher: $e',
