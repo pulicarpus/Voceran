@@ -36,22 +36,25 @@ class _TabCetakState extends State<TabCetak> {
 
   Future<void> _loadProfiles() async {
     if (_isLoadingProfiles) return;
+
     setState(() => _isLoadingProfiles = true);
 
     try {
       final response = await MikrotikAPI.run([
-        '/ip/hotspot/user/profile/print',
+        ['/ip/hotspot/user/profile/print'],
       ]);
 
       if (!mounted) return;
 
       final profiles = <String>{};
 
-      for (final row in response) {
-        if (row is Map) {
-          final name = row['=name']?.toString().trim() ??
-              row['name']?.toString().trim();
-          if (name != null && name.isNotEmpty) {
+      // MikrotikAPI.run() mengembalikan List<String> berupa
+      // word-word RouterOS API, misalnya:
+      // !re, =.id=*1, =name=default, =name=hsprof1, !done
+      for (final word in response) {
+        if (word.startsWith('=name=')) {
+          final name = word.substring('=name='.length).trim();
+          if (name.isNotEmpty) {
             profiles.add(name);
           }
         }
@@ -79,10 +82,27 @@ class _TabCetakState extends State<TabCetak> {
 
   String _generateCode(Random random) {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
     return List.generate(
       6,
       (_) => chars[random.nextInt(chars.length)],
     ).join();
+  }
+
+  bool _hasRouterError(List<String> response) {
+    return response.contains('!trap') ||
+        response.contains('!fatal') ||
+        response.contains('ERROR');
+  }
+
+  String _extractRouterMessage(List<String> response) {
+    for (final word in response) {
+      if (word.startsWith('=message=')) {
+        return word.substring('=message='.length).trim();
+      }
+    }
+
+    return 'RouterOS menolak perintah.';
   }
 
   Future<void> _prosesCetakDanSimpan() async {
@@ -102,14 +122,13 @@ class _TabCetakState extends State<TabCetak> {
       return;
     }
 
-    // Multi-page PDF tidak lagi dibatasi satu lembar.
     if (qty > 5000) {
       _showMessage('Jumlah maksimal 5000 voucher per proses.');
       return;
     }
 
     if (uptime.isEmpty) {
-      _showMessage('Isi masa aktif voucher.');
+      _showMessage('Isi masa aktif / limit uptime.');
       return;
     }
 
@@ -122,15 +141,18 @@ class _TabCetakState extends State<TabCetak> {
 
       while (codes.length < qty) {
         final code = _generateCode(random);
+
         if (used.add(code)) {
           codes.add(code);
         }
       }
 
-      final commands = <String>[];
+      // MikrotikAPI.run() menerima List<List<String>>.
+      // Setiap voucher menjadi satu RouterOS API sentence.
+      final commands = <List<String>>[];
 
       for (final code in codes) {
-        commands.addAll([
+        commands.add([
           '/ip/hotspot/user/add',
           '=name=$code',
           '=password=$code',
@@ -144,24 +166,26 @@ class _TabCetakState extends State<TabCetak> {
 
       if (!mounted) return;
 
-      final hasError = response.any((row) {
-        if (row is! Map) return false;
-        final type = (row['type'] ?? row['=type'] ?? '').toString();
-        return type == '!trap' || type == '!fatal';
-      });
+      if (_hasRouterError(response)) {
+        final message = _extractRouterMessage(response);
 
-      if (hasError) {
         _showMessage(
-          'Gagal membuat voucher di MikroTik. Tidak mencetak PDF agar data tidak salah.',
+          'Gagal membuat voucher di MikroTik: $message',
         );
         return;
       }
 
-      await _cetakPdf(codes, profile, uptime);
+      // Hanya cetak setelah seluruh command selesai tanpa !trap.
+      await _cetakPdf(
+        codes,
+        profile,
+        uptime,
+      );
 
       if (!mounted) return;
+
       _showMessage(
-        '$qty voucher berhasil dibuat dan PDF multi-halaman selesai dibuat.',
+        '$qty voucher berhasil dibuat dan PDF selesai dibuat.',
       );
     } catch (e) {
       if (mounted) {
@@ -186,9 +210,8 @@ class _TabCetakState extends State<TabCetak> {
     const horizontalGap = 5.0;
     const verticalGap = 5.0;
 
-    // A4 dengan margin 15pt:
-    // area efektif kira-kira 565 x 812pt.
-    // 6 kolom x 12 baris = 72 voucher/halaman.
+    // A4 dengan margin 15pt.
+    // Layout target: 6 kolom x 12 baris = 72 voucher/lembar.
     const columns = 6;
     const rows = 12;
     const perPage = columns * rows;
@@ -278,7 +301,7 @@ class _TabCetakState extends State<TabCetak> {
       ..showSnackBar(
         SnackBar(
           content: Text(message),
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 4),
         ),
       );
   }
@@ -298,7 +321,9 @@ class _TabCetakState extends State<TabCetak> {
       ),
       body: SafeArea(
         child: _isLoadingProfiles
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(
+                child: CircularProgressIndicator(),
+              )
             : SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -321,7 +346,9 @@ class _TabCetakState extends State<TabCetak> {
                       onChanged: _isLoading
                           ? null
                           : (value) {
-                              setState(() => _selectedProfile = value);
+                              setState(() {
+                                _selectedProfile = value;
+                              });
                             },
                     ),
                     const SizedBox(height: 16),
@@ -349,7 +376,8 @@ class _TabCetakState extends State<TabCetak> {
                     SizedBox(
                       height: 52,
                       child: ElevatedButton.icon(
-                        onPressed: _isLoading ? null : _prosesCetakDanSimpan,
+                        onPressed:
+                            _isLoading ? null : _prosesCetakDanSimpan,
                         icon: _isLoading
                             ? const SizedBox(
                                 width: 20,
