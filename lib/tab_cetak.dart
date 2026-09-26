@@ -94,6 +94,27 @@ class _TabCetakState extends State<TabCetak> {
     return 'RouterOS menolak perintah.';
   }
 
+  Future<Set<String>> _loadExistingVoucherNames() async {
+    final response = await MikrotikAPI.run([
+      ['/ip/hotspot/user/print'],
+    ]);
+
+    if (_hasRouterError(response)) {
+      throw Exception(_extractRouterMessage(response));
+    }
+
+    final names = <String>{};
+
+    for (final word in response) {
+      if (word.startsWith('=name=')) {
+        final name = word.substring('=name='.length).trim();
+        if (name.isNotEmpty) names.add(name.toUpperCase());
+      }
+    }
+
+    return names;
+  }
+
   Future<void> _prosesCetakDanSimpan() async {
     if (_isLoading) return;
 
@@ -124,13 +145,23 @@ class _TabCetakState extends State<TabCetak> {
     setState(() => _isLoading = true);
 
     try {
+      // Ambil username HotSpot yang sudah ada terlebih dahulu.
+      // Ini mencegah generator membuat kode yang bentrok dengan
+      // user voucher lama maupun user HotSpot manual.
+      final existingNames = await _loadExistingVoucherNames();
+
       final random = Random.secure();
       final codes = <String>[];
       final used = <String>{};
 
       while (codes.length < qty) {
         final code = _generateCode(random);
-        if (used.add(code)) codes.add(code);
+        final normalized = code.toUpperCase();
+
+        if (!existingNames.contains(normalized) &&
+            used.add(normalized)) {
+          codes.add(normalized);
+        }
       }
 
       final commands = <List<String>>[];
