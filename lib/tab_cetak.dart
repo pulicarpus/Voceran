@@ -48,15 +48,10 @@ class _TabCetakState extends State<TabCetak> {
 
       final profiles = <String>{};
 
-      // MikrotikAPI.run() mengembalikan List<String> berupa
-      // word-word RouterOS API, misalnya:
-      // !re, =.id=*1, =name=default, =name=hsprof1, !done
       for (final word in response) {
         if (word.startsWith('=name=')) {
           final name = word.substring('=name='.length).trim();
-          if (name.isNotEmpty) {
-            profiles.add(name);
-          }
+          if (name.isNotEmpty) profiles.add(name);
         }
       }
 
@@ -70,19 +65,14 @@ class _TabCetakState extends State<TabCetak> {
         }
       });
     } catch (e) {
-      if (mounted) {
-        _showMessage('Gagal membaca profile: $e');
-      }
+      if (mounted) _showMessage('Gagal membaca profile: $e');
     } finally {
-      if (mounted) {
-        setState(() => _isLoadingProfiles = false);
-      }
+      if (mounted) setState(() => _isLoadingProfiles = false);
     }
   }
 
   String _generateCode(Random random) {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
     return List.generate(
       6,
       (_) => chars[random.nextInt(chars.length)],
@@ -101,7 +91,6 @@ class _TabCetakState extends State<TabCetak> {
         return word.substring('=message='.length).trim();
       }
     }
-
     return 'RouterOS menolak perintah.';
   }
 
@@ -128,7 +117,7 @@ class _TabCetakState extends State<TabCetak> {
     }
 
     if (uptime.isEmpty) {
-      _showMessage('Isi masa aktif / limit uptime.');
+      _showMessage('Isi limit uptime.');
       return;
     }
 
@@ -141,14 +130,9 @@ class _TabCetakState extends State<TabCetak> {
 
       while (codes.length < qty) {
         final code = _generateCode(random);
-
-        if (used.add(code)) {
-          codes.add(code);
-        }
+        if (used.add(code)) codes.add(code);
       }
 
-      // MikrotikAPI.run() menerima List<List<String>>.
-      // Setiap voucher menjadi satu RouterOS API sentence.
       final commands = <List<String>>[];
 
       for (final code in codes) {
@@ -167,20 +151,14 @@ class _TabCetakState extends State<TabCetak> {
       if (!mounted) return;
 
       if (_hasRouterError(response)) {
-        final message = _extractRouterMessage(response);
-
         _showMessage(
-          'Gagal membuat voucher di MikroTik: $message',
+          'Gagal membuat voucher di MikroTik: '
+          '${_extractRouterMessage(response)}',
         );
         return;
       }
 
-      // Hanya cetak setelah seluruh command selesai tanpa !trap.
-      await _cetakPdf(
-        codes,
-        profile,
-        uptime,
-      );
+      await _cetakPdf(codes, profile, uptime);
 
       if (!mounted) return;
 
@@ -188,13 +166,9 @@ class _TabCetakState extends State<TabCetak> {
         '$qty voucher berhasil dibuat dan PDF selesai dibuat.',
       );
     } catch (e) {
-      if (mounted) {
-        _showMessage('Gagal mencetak voucher: $e');
-      }
+      if (mounted) _showMessage('Gagal mencetak voucher: $e');
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -209,9 +183,6 @@ class _TabCetakState extends State<TabCetak> {
     const cardHeight = 62.0;
     const horizontalGap = 5.0;
     const verticalGap = 5.0;
-
-    // A4 dengan margin 15pt.
-    // Layout target: 6 kolom x 12 baris = 72 voucher/lembar.
     const columns = 6;
     const rows = 12;
     const perPage = columns * rows;
@@ -219,7 +190,6 @@ class _TabCetakState extends State<TabCetak> {
     for (int start = 0; start < codes.length; start += perPage) {
       final end = min(start + perPage, codes.length);
       final pageCodes = codes.sublist(start, end);
-
       final cards = <pw.Widget>[];
 
       for (final code in pageCodes) {
@@ -321,9 +291,7 @@ class _TabCetakState extends State<TabCetak> {
       ),
       body: SafeArea(
         child: _isLoadingProfiles
-            ? const Center(
-                child: CircularProgressIndicator(),
-              )
+            ? const Center(child: CircularProgressIndicator())
             : SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -346,9 +314,7 @@ class _TabCetakState extends State<TabCetak> {
                       onChanged: _isLoading
                           ? null
                           : (value) {
-                              setState(() {
-                                _selectedProfile = value;
-                              });
+                              setState(() => _selectedProfile = value);
                             },
                     ),
                     const SizedBox(height: 16),
@@ -367,8 +333,11 @@ class _TabCetakState extends State<TabCetak> {
                       controller: _uptimeController,
                       enabled: !_isLoading,
                       decoration: const InputDecoration(
-                        labelText: 'Masa aktif / limit uptime',
+                        labelText: 'Total pemakaian / limit uptime',
                         hintText: 'Contoh: 1h, 2h, 1d',
+                        helperText:
+                            'Ini adalah total waktu internet yang boleh dipakai. '
+                            'Terpisah dari masa berlaku kalender profil.',
                         border: OutlineInputBorder(),
                       ),
                     ),
