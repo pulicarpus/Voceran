@@ -21,14 +21,8 @@ class MikrotikAPI {
 
   /// Menjalankan satu atau beberapa command RouterOS API.
   ///
-  /// Contoh:
-  /// [
-  ///   ['/system/identity/print'],
-  ///   ['/ip/hotspot/user/print']
-  /// ]
-  ///
-  /// Semua command dikirim secara berurutan dan setiap command
-  /// ditunggu sampai RouterOS mengirim !done / !trap.
+  /// Setiap command dikirim sebagai satu sentence dan ditunggu
+  /// sampai RouterOS mengirim !done / !fatal.
   static Future<List<String>> run(List<List<String>> commands) async {
     if (commands.isEmpty) {
       return [];
@@ -37,7 +31,11 @@ class MikrotikAPI {
     final auth = await _getAuth();
 
     if (auth['ip']!.isEmpty || auth['user']!.isEmpty) {
-      return ['!trap', '=message=Konfigurasi router belum lengkap'];
+      return [
+        'ERROR',
+        '!trap',
+        '=message=Konfigurasi router belum lengkap',
+      ];
     }
 
     Socket? socket;
@@ -51,13 +49,20 @@ class MikrotikAPI {
 
       socket.setOption(SocketOption.tcpNoDelay, true);
 
-      // RouterOS API klasik / RouterOS v6:
-      // /login
-      // =name=username
-      // =password=password
-      // !done
+      // IMPORTANT:
+      // Socket Stream adalah single-subscription stream.
+      // Versi lama mencoba listen() ulang untuk setiap command,
+      // sehingga setelah command pertama muncul:
+      // "Bad state: Stream has already been listened to."
+      //
+      // Broadcast stream memungkinkan setiap sentence membuat
+      // subscription baru setelah sentence sebelumnya selesai.
+      final input = socket.asBroadcastStream();
+
+      // Login RouterOS v6.
       await _sendSentenceAndWait(
         socket,
+        input,
         [
           '/login',
           '=name=${auth['user']}',
@@ -65,7 +70,7 @@ class MikrotikAPI {
         ],
       );
 
-      final List<String> result = [];
+      final result = <String>[];
 
       for (final command in commands) {
         if (command.isEmpty) {
@@ -74,13 +79,12 @@ class MikrotikAPI {
 
         final response = await _sendSentenceAndWait(
           socket,
+          input,
           command,
         );
 
         result.addAll(response);
 
-        // Jangan lanjutkan command berikutnya jika RouterOS
-        // melaporkan kesalahan.
         if (_containsTrap(response)) {
           break;
         }
@@ -109,10 +113,9 @@ class MikrotikAPI {
     }
   }
 
-  /// Mengirim satu sentence RouterOS API dan menunggu sampai
-  /// RouterOS menyelesaikan sentence tersebut.
   static Future<List<String>> _sendSentenceAndWait(
     Socket socket,
+    Stream<List<int>> input,
     List<String> words,
   ) async {
     for (final word in words) {
@@ -121,13 +124,11 @@ class MikrotikAPI {
 
     // Empty word menandai akhir sentence.
     socket.add(const <int>[0]);
-
     await socket.flush();
 
-    return _readSentence(socket);
+    return _readSentence(input);
   }
 
-  /// Encode dan kirim satu word menggunakan framing RouterOS API.
   static void _sendWord(Socket socket, String word) {
     final bytes = utf8.encode(word);
 
@@ -135,7 +136,6 @@ class MikrotikAPI {
     socket.add(bytes);
   }
 
-  /// RouterOS API variable-length encoding.
   static List<int> _encodeLength(int length) {
     if (length < 0x80) {
       return [length];
@@ -174,11 +174,9 @@ class MikrotikAPI {
     ];
   }
 
-  /// Membaca response RouterOS sampai menemukan !done atau !trap.
-  ///
-  /// Parser ini juga menangani frame yang terpotong di tengah packet,
-  /// karena TCP tidak menjamin satu packet = satu word API.
-  static Future<List<String>> _readSentence(Socket socket) async {
+  static Future<List<String>> _readSentence(
+    Stream<List<int>> input,
+  ) async {
     final completer = Completer<List<String>>();
     final buffer = <int>[];
     final words = <String>[];
@@ -203,12 +201,7 @@ class MikrotikAPI {
 
       timeoutTimer?.cancel();
       subscription?.cancel();
-
-      if (error is TimeoutException) {
-        completer.completeError(error);
-      } else {
-        completer.completeError(error);
-      }
+      completer.completeError(error);
     }
 
     void parseBuffer() {
@@ -217,7 +210,7 @@ class MikrotikAPI {
           return;
         }
 
-        // Empty word = akhir sentence.
+        // Empty word = end of sentence.
         if (buffer[0] == 0) {
           buffer.removeAt(0);
           continue;
@@ -249,26 +242,18 @@ class MikrotikAPI {
 
         words.add(word);
 
-        // RouterOS menyelesaikan sentence dengan !done.
         if (word == '!done') {
           finish(List<String>.from(words));
           return;
         }
 
-        // !trap berarti command gagal.
-        // Kita tetap kembalikan response lengkap agar caller
-        // bisa membaca =message=...
-        if (word == '!trap') {
-          // Jangan langsung finish di sini.
-          // RouterOS biasanya mengirim =message= setelah !trap.
-          continue;
-        }
-
-        // !fatal juga harus mengakhiri pembacaan.
         if (word == '!fatal') {
           finish(List<String>.from(words));
           return;
         }
+
+        // !trap biasanya diikuti =message=..., jadi teruskan
+        // membaca sampai !done / akhir response.
       }
     }
 
@@ -276,14 +261,14 @@ class MikrotikAPI {
       _responseTimeout,
       () {
         fail(
-          TimeoutException(
+          const TimeoutException(
             'Timeout menunggu response RouterOS API',
           ),
         );
       },
     );
 
-    subscription = socket.listen(
+    subscription = input.listen(
       (data) {
         buffer.addAll(data);
 
@@ -300,7 +285,7 @@ class MikrotikAPI {
         if (!completer.isCompleted) {
           fail(
             const SocketException(
-              'Koneksi MikroTik ditutup sebelum !done diterima',
+              'Koneksi MikroTik ditutup sebelum response selesai',
             ),
           );
         }
@@ -311,7 +296,6 @@ class MikrotikAPI {
     return completer.future;
   }
 
-  /// Decode RouterOS variable-length prefix.
   static _LengthInfo? _decodeLength(List<int> data) {
     if (data.isEmpty) {
       return null;
@@ -319,7 +303,6 @@ class MikrotikAPI {
 
     final first = data[0];
 
-    // 1 byte length
     if ((first & 0x80) == 0) {
       return _LengthInfo(
         length: first,
@@ -327,7 +310,6 @@ class MikrotikAPI {
       );
     }
 
-    // 2 byte length
     if ((first & 0xC0) == 0x80) {
       if (data.length < 2) {
         return null;
@@ -343,7 +325,6 @@ class MikrotikAPI {
       );
     }
 
-    // 3 byte length
     if ((first & 0xE0) == 0xC0) {
       if (data.length < 3) {
         return null;
@@ -360,7 +341,6 @@ class MikrotikAPI {
       );
     }
 
-    // 4 byte length
     if ((first & 0xF0) == 0xE0) {
       if (data.length < 4) {
         return null;
@@ -378,7 +358,6 @@ class MikrotikAPI {
       );
     }
 
-    // 5 byte length
     if (first == 0xF0) {
       if (data.length < 5) {
         return null;
