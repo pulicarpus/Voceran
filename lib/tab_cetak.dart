@@ -14,10 +14,13 @@ class TabCetak extends StatefulWidget {
 
 class _TabCetakState extends State<TabCetak> {
   final _qtyController = TextEditingController(text: '72');
+  final _timeLimitController = TextEditingController(text: '1h');
+  final _dataLimitController = TextEditingController(text: '0');
+  final _commentController = TextEditingController();
 
   List<Map<String, String>> _profiles = [];
   Map<String, String>? _selectedProfile;
-  String _usageDuration = '1h';
+  String _dataUnit = 'MB';
   bool _usageDetected = false;
   bool _isLoading = false;
   bool _isLoadingProfiles = false;
@@ -35,6 +38,9 @@ class _TabCetakState extends State<TabCetak> {
   @override
   void dispose() {
     _qtyController.dispose();
+    _timeLimitController.dispose();
+    _dataLimitController.dispose();
+    _commentController.dispose();
     super.dispose();
   }
 
@@ -129,6 +135,12 @@ class _TabCetakState extends State<TabCetak> {
       out['selling-price'] = fields[3].trim();
       if (fields.length > 5) out['lock-user'] = fields[5].trim();
     }
+    if (script.contains('# VOCERAN_MIKHMON_COMPAT')) {
+      out['owner'] = 'voceran';
+      out['mikhmon'] = 'yes';
+    } else if (out['mikhmon'] == 'yes') {
+      out['owner'] = 'mikhmon';
+    }
     return out;
   }
 
@@ -150,9 +162,6 @@ class _TabCetakState extends State<TabCetak> {
   }
 
   Future<String?> _detectUsageDuration(String profile) async {
-    // Mikhmon stores validity in the profile script, but limit-uptime belongs
-    // to each HotSpot user. Reuse the most common existing value for this
-    // profile instead of inventing one. This keeps existing packages intact.
     try {
       final r = await MikrotikAPI.run([
         ['/ip/hotspot/user/print', '?profile=$profile'],
@@ -188,10 +197,11 @@ class _TabCetakState extends State<TabCetak> {
   }
 
   Future<void> _selectProfile(Map<String, String>? profile) async {
+    final inferred = profile == null ? '1h' : _inferFromName(profile['name'] ?? '');
     setState(() {
       _selectedProfile = profile;
       _usageDetected = false;
-      _usageDuration = profile == null ? '1h' : _inferFromName(profile['name'] ?? '');
+      _timeLimitController.text = inferred;
     });
     if (profile == null) return;
 
@@ -199,9 +209,33 @@ class _TabCetakState extends State<TabCetak> {
     if (!mounted || _selectedProfile?['name'] != profile['name']) return;
     if (detected != null) {
       setState(() {
-        _usageDuration = detected;
+        _timeLimitController.text = detected;
         _usageDetected = true;
       });
+    }
+  }
+
+  int _dataLimitBytes() {
+    final amount = double.tryParse(_dataLimitController.text.trim()) ?? 0;
+    if (amount <= 0) return 0;
+    final multiplier = _dataUnit == 'GB' ? 1073741824 : 1048576;
+    final bytes = amount * multiplier;
+    if (bytes > 9223372036854775807) return 0;
+    return bytes.round();
+  }
+
+  String _safeComment(String value) {
+    return value.trim().replaceAll('|', '-').replaceAll('~', '-').replaceAll('!', '-');
+  }
+
+  String _expiryModeLabel(String mode) {
+    switch (mode) {
+      case 'rem': return 'Remove';
+      case 'ntf': return 'Notice';
+      case 'remc': return 'Remove & Record';
+      case 'ntfc': return 'Notice & Record';
+      case '0': return 'None';
+      default: return mode.isEmpty ? 'Tidak terdeteksi' : mode;
     }
   }
 
@@ -209,12 +243,17 @@ class _TabCetakState extends State<TabCetak> {
     if (_isLoading) return;
     final profile = _selectedProfile;
     final qty = int.tryParse(_qtyController.text.trim());
+    final timeLimit = _timeLimitController.text.trim();
     if (profile == null) {
       _show('Pilih paket/profile terlebih dahulu.');
       return;
     }
     if (qty == null || qty < 1 || qty > 5000) {
       _show('Jumlah voucher harus 1 sampai 5000.');
+      return;
+    }
+    if (timeLimit.isEmpty) {
+      _show('Waktu / Time Limit harus diisi. Contoh: 1h, 3h, 1d.');
       return;
     }
 
@@ -229,11 +268,17 @@ class _TabCetakState extends State<TabCetak> {
         if (!existing.contains(code) && used.add(code)) codes.add(code);
       }
 
-      // Mikhmon checks vc/up/empty on first login. Username=password is a
-      // voucher, therefore use the vc- prefix. Do not use EXPNS here.
       final now = DateTime.now();
-      final batch = 'vc-${now.millisecondsSinceEpoch % 1000}-'
-          '${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}.${(now.year % 100).toString().padLeft(2, '0')}-';
+      final randomBatch = 100 + random.nextInt(900);
+      final validity = profile['validity'] ?? '';
+      final price = profile['price'] ?? '0';
+      final sellingPrice = profile['selling-price'] ?? '0';
+      final lockUser = profile['lock-user'] ?? 'Disable';
+      final comment = _safeComment(_commentController.text);
+      final base = 'vc-$randomBatch-'
+          '${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}.${(now.year % 100).toString().padLeft(2, '0')}-$comment';
+      final datalimitBytes = _dataLimitBytes();
+      final batch = '$base|~${profile['name'] ?? ''}~$validity~$price!$sellingPrice~$timeLimit~$datalimitBytes~$lockUser';
 
       final commands = <List<String>>[];
       for (final code in codes) {
@@ -242,7 +287,8 @@ class _TabCetakState extends State<TabCetak> {
           '=name=$code',
           '=password=$code',
           '=profile=${profile['name']}',
-          '=limit-uptime=$_usageDuration',
+          '=limit-uptime=$timeLimit',
+          '=limit-bytes-total=$datalimitBytes',
           '=comment=$batch',
         ]);
       }
@@ -258,11 +304,12 @@ class _TabCetakState extends State<TabCetak> {
         codes,
         profile['name'] ?? '-',
         profile['rate-limit'] ?? '',
-        _usageDuration,
-        profile['validity'] ?? '',
+        timeLimit,
+        validity.isEmpty ? '-' : validity,
+        datalimitBytes,
       );
       if (mounted) {
-        _show('$qty voucher berhasil dibuat. Masa berlaku tetap mengikuti profile/Mikhmon.');
+        _show('$qty voucher berhasil dibuat. Time Limit $timeLimit, Validity ${validity.isEmpty ? 'tidak diatur' : validity}.');
       }
     } catch (e) {
       if (mounted) _show('Gagal membuat voucher: $e');
@@ -277,9 +324,11 @@ class _TabCetakState extends State<TabCetak> {
     String rate,
     String uptime,
     String validity,
+    int dataLimitBytes,
   ) async {
     final pdf = pw.Document();
     const perPage = 72;
+    final dataText = dataLimitBytes <= 0 ? 'Data unlimited' : 'Data ${_formatBytes(dataLimitBytes)}';
     for (var start = 0; start < codes.length; start += perPage) {
       final pageCodes = codes.sublist(start, min(start + perPage, codes.length));
       final cards = <pw.Widget>[];
@@ -299,6 +348,7 @@ class _TabCetakState extends State<TabCetak> {
               pw.Text(code, style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, letterSpacing: 1.1)),
               pw.Text('$profile • pakai $uptime', style: const pw.TextStyle(fontSize: 5.5)),
               pw.Text('Berlaku $validity • $rate', style: const pw.TextStyle(fontSize: 5.5)),
+              pw.Text(dataText, style: const pw.TextStyle(fontSize: 5.5)),
               pw.Text('User: $code  Pass: $code', style: const pw.TextStyle(fontSize: 5.5)),
             ],
           ),
@@ -314,6 +364,11 @@ class _TabCetakState extends State<TabCetak> {
       name: 'voceran_${codes.length}.pdf',
       onLayout: (_) async => pdf.save(),
     );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1073741824) return '${(bytes / 1073741824).toStringAsFixed(1)} GB';
+    return '${(bytes / 1048576).toStringAsFixed(0)} MB';
   }
 
   void _show(String message) {
@@ -341,6 +396,9 @@ class _TabCetakState extends State<TabCetak> {
 
   Widget _loadingBody() {
     if (_isLoadingProfiles) return const Center(child: CircularProgressIndicator());
+    final profile = _selectedProfile;
+    final isMikhmon = profile?['owner'] == 'mikhmon';
+    final mode = profile?['expiry-mode'] ?? '';
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -353,15 +411,16 @@ class _TabCetakState extends State<TabCetak> {
               border: OutlineInputBorder(),
             ),
             items: _profiles.map((p) {
-              final m = p['mikhmon'] == 'yes';
+              final m = p['owner'] == 'mikhmon';
+              final v = p['validity'];
               return DropdownMenuItem(
                 value: p,
-                child: Text('${p['name']} • ${p['rate-limit'] ?? '-'}${m ? ' • Mikhmon' : ''}'),
+                child: Text('${p['name']} • ${p['rate-limit'] ?? '-'}${m ? ' • Mikhmon' : ''}${v == null || v.isEmpty ? '' : ' • $v'}'),
               );
             }).toList(),
             onChanged: _isLoading ? null : _selectProfile,
           ),
-          if (_selectedProfile != null) ...[
+          if (profile != null) ...[
             const SizedBox(height: 12),
             Card(
               child: Padding(
@@ -369,15 +428,18 @@ class _TabCetakState extends State<TabCetak> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Paket: ${_selectedProfile!['name'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text('Speed: ${_selectedProfile!['rate-limit'] ?? 'Unlimited'}'),
-                    Text('Masa berlaku: ${_selectedProfile!['validity'] ?? 'mengikuti profile'}'),
-                    Text('Durasi pemakaian: $_usageDuration${_usageDetected ? ' (terdeteksi dari voucher lama)' : ' (otomatis)'}'),
-                    if (_selectedProfile!['mikhmon'] == 'yes')
+                    Text('Paket: ${profile['name'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text('Speed: ${profile['rate-limit']?.isEmpty ?? true ? 'Unlimited' : profile['rate-limit']}'),
+                    Text('Validity: ${profile['validity']?.isEmpty ?? true ? 'tidak terdeteksi' : profile['validity']}'),
+                    Text('Mode expired: ${_expiryModeLabel(mode)}'),
+                    if ((profile['price'] ?? '').isNotEmpty) Text('Harga: ${profile['price']}'),
+                    if ((profile['selling-price'] ?? '').isNotEmpty) Text('Harga jual: ${profile['selling-price']}'),
+                    if ((profile['lock-user'] ?? '').isNotEmpty) Text('Kunci pengguna: ${profile['lock-user']}'),
+                    if (isMikhmon)
                       const Padding(
                         padding: EdgeInsets.only(top: 6),
                         child: Text(
-                          'Kompatibilitas Mikhmon aktif. Script expiry profile tidak diubah.',
+                          'Profile Mikhmon hanya dibaca. Script expiry di router tidak diubah.',
                           style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600),
                         ),
                       ),
@@ -385,19 +447,50 @@ class _TabCetakState extends State<TabCetak> {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _durationOptions.contains(_usageDuration) ? _usageDuration : null,
-              decoration: const InputDecoration(
-                labelText: 'Durasi pemakaian voucher',
-                helperText: 'Bisa disesuaikan; masa berlaku kalender tetap milik profile/Mikhmon.',
-                border: OutlineInputBorder(),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _timeLimitController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                labelText: 'Waktu / Time Limit',
+                hintText: 'Contoh: 1h, 3h, 12h, 1d',
+                helperText: _usageDetected
+                    ? 'Nilai awal dideteksi dari voucher lama pada profile ini.'
+                    : 'Ini batas total waktu pemakaian voucher; terpisah dari Validity.',
+                border: const OutlineInputBorder(),
               ),
-              items: _durationOptions.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
-              onChanged: _isLoading ? null : (v) => setState(() => _usageDuration = v ?? _usageDuration),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              children: _durationOptions.map((v) => ActionChip(
+                label: Text(v),
+                onPressed: _isLoading ? null : () => setState(() => _timeLimitController.text = v),
+              )).toList(),
             ),
           ],
           const SizedBox(height: 16),
+          TextField(
+            controller: _dataLimitController,
+            enabled: !_isLoading,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'Data Limit',
+              hintText: '0 = unlimited',
+              suffixIcon: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _dataUnit,
+                  items: const [
+                    DropdownMenuItem(value: 'MB', child: Text('MB')),
+                    DropdownMenuItem(value: 'GB', child: Text('GB')),
+                  ],
+                  onChanged: _isLoading ? null : (v) => setState(() => _dataUnit = v ?? 'MB'),
+                ),
+              ),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
           TextField(
             controller: _qtyController,
             enabled: !_isLoading,
@@ -405,6 +498,16 @@ class _TabCetakState extends State<TabCetak> {
             decoration: const InputDecoration(
               labelText: 'Jumlah voucher',
               hintText: 'Contoh: 72, 100, 200',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _commentController,
+            enabled: !_isLoading,
+            decoration: const InputDecoration(
+              labelText: 'Comment / Keterangan',
+              hintText: 'Contoh: Paket-Warung',
               border: OutlineInputBorder(),
             ),
           ),
@@ -421,7 +524,7 @@ class _TabCetakState extends State<TabCetak> {
           ),
           const SizedBox(height: 10),
           const Text(
-            'Voucher Mikhmon dibuat dengan komentar vc- dan tanpa EXPNS Voceran. Profile lama tidak disentuh.',
+            'Format voucher dibuat kompatibel dengan pola Mikhmon: vc-, Time Limit, Data Limit, comment dan metadata paket. Profile Mikhmon lama tidak disentuh.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
