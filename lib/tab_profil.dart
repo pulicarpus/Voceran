@@ -154,6 +154,9 @@ class _TabProfilState extends State<TabProfil> {
       } else if (line.startsWith('=mac-cookie-timeout=')) {
         current ??= <String, String>{};
         current!['mac-cookie-timeout'] = line.substring(20);
+      } else if (line.startsWith('=on-login=')) {
+        current ??= <String, String>{};
+        current!['on-login'] = line.substring(10);
       }
     }
 
@@ -185,6 +188,25 @@ class _TabProfilState extends State<TabProfil> {
     }
     return '';
   }
+
+  bool _looksLikeMikhmonProfile(Map<String, String> profile) {
+    final script = profile['on-login'] ?? '';
+    return script.contains(':put (",') &&
+        (script.contains('validity') ||
+            script.contains('/system scheduler add') ||
+            script.contains('next-run'));
+  }
+
+  String _mikhmonValidity(Map<String, String> profile) {
+    final script = profile['on-login'] ?? '';
+    final start = script.indexOf(':put (",');
+    if (start < 0) return '';
+    final end = script.indexOf('")', start);
+    if (end < 0) return '';
+    final fields = script.substring(start + 8, end).split(',');
+    return fields.length >= 3 ? fields[2].trim() : '';
+  }
+
 
   Future<bool> _ensureMacCookieLogin() async {
     final response = await MikrotikAPI.run([
@@ -451,11 +473,23 @@ class _TabProfilState extends State<TabProfil> {
     setState(() => _isLoading = true);
 
     try {
-      final prepared = await _ensureMacCookieLogin();
-      if (!prepared) return;
-
-      final schedulerReady = await _ensureExpiryScheduler();
-      if (!schedulerReady) return;
+      final existing = await MikrotikAPI.run([
+        ['/ip/hotspot/user/profile/print'],
+      ]);
+      if (_isErrorResponse(existing)) {
+        _showSnackBar(
+          'Gagal memeriksa profile: ${_extractRouterMessage(existing)}',
+          Colors.redAccent,
+        );
+        return;
+      }
+      if (existing.any((line) => line == '=name=$name')) {
+        _showSnackBar(
+          'Profile "$name" sudah ada. Tidak ditimpa agar profile Mikhmon aman.',
+          Colors.orange,
+        );
+        return;
+      }
 
       final response = await MikrotikAPI.run([
         [
@@ -513,6 +547,18 @@ class _TabProfilState extends State<TabProfil> {
       return;
     }
 
+    final existingProfile = _listProfil.cast<Map<String, String>?>().firstWhere(
+      (p) => p?['id'] == id,
+      orElse: () => null,
+    );
+    if (existingProfile != null && _looksLikeMikhmonProfile(existingProfile)) {
+      _showSnackBar(
+        'Profile Mikhmon tidak diedit dari Voceran agar script expiry dan voucher lama tetap aman.',
+        Colors.orange,
+      );
+      return;
+    }
+
     final parsedSharedUsers = int.tryParse(sharedUsers);
     if (parsedSharedUsers == null || parsedSharedUsers < 1) {
       _showSnackBar(
@@ -534,12 +580,6 @@ class _TabProfilState extends State<TabProfil> {
     setState(() => _isLoading = true);
 
     try {
-      final prepared = await _ensureMacCookieLogin();
-      if (!prepared) return;
-
-      final schedulerReady = await _ensureExpiryScheduler();
-      if (!schedulerReady) return;
-
       final response = await MikrotikAPI.run([
         [
           '/ip/hotspot/user/profile/set',
@@ -714,7 +754,7 @@ class _TabProfilState extends State<TabProfil> {
               child: ExpansionTile(
                 initiallyExpanded: _listProfil.isEmpty,
                 title: const Text(
-                  'Buat Profil Voucher V3',
+                  'Buat Profil Voucher Baru',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -781,6 +821,11 @@ class _TabProfilState extends State<TabProfil> {
             ),
             const SizedBox(height: 25),
             const Text(
+              'Profile Mikhmon yang terdeteksi diberi label READ-ONLY dan tidak akan diubah oleh Voceran.',
+              style: TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+            const SizedBox(height: 8),
+            const Text(
               'Daftar Profil Terpasang',
               style: TextStyle(
                 fontSize: 18,
@@ -806,9 +851,11 @@ class _TabProfilState extends State<TabProfil> {
                         children: _listProfil.map((prof) {
                           final rate =
                               prof['rate-limit']?.trim() ?? '';
-                          final validity =
-                              prof['mac-cookie-timeout']?.trim() ??
-                                  '1d';
+                          final isMikhmon = _looksLikeMikhmonProfile(prof);
+                          final detectedValidity = _mikhmonValidity(prof);
+                          final validity = isMikhmon && detectedValidity.isNotEmpty
+                              ? detectedValidity
+                              : (prof['mac-cookie-timeout']?.trim() ?? '1d');
 
                           return Card(
                             elevation: 2,
@@ -838,7 +885,8 @@ class _TabProfilState extends State<TabProfil> {
                                 '${rate.isEmpty ? 'Unlimited' : rate}'
                                 '\nBerlaku: $validity'
                                 ' | Shared: '
-                                '${prof['shared-users'] ?? '1'}',
+                                '${prof['shared-users'] ?? '1'}'
+                                '${isMikhmon ? '\nMikhmon: READ-ONLY' : ''}',
                               ),
                               trailing: IconButton(
                                 icon: const Icon(
@@ -846,7 +894,7 @@ class _TabProfilState extends State<TabProfil> {
                                   color: Colors.deepPurple,
                                 ),
                                 tooltip: 'Edit Profil Ini',
-                                onPressed: _isLoading
+                                onPressed: _isLoading || isMikhmon
                                     ? null
                                     : () => _openEditDialog(prof),
                               ),
