@@ -25,10 +25,6 @@ class _TabCetakState extends State<TabCetak> {
   bool _isLoading = false;
   bool _isLoadingProfiles = false;
 
-  static const _durationOptions = <String>[
-    '15m', '30m', '1h', '2h', '3h', '5h', '6h', '12h', '1d', '2d', '3d', '7d', '14d', '30d'
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -459,14 +455,6 @@ class _TabCetakState extends State<TabCetak> {
                     : 'Ini batas total waktu pemakaian voucher; terpisah dari Validity.',
                 border: const OutlineInputBorder(),
               ),
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              children: _durationOptions.map((v) => ActionChip(
-                label: Text(v),
-                onPressed: _isLoading ? null : () => setState(() => _timeLimitController.text = v),
-              )).toList(),
             ),
           ],
           const SizedBox(height: 16),
